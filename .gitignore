@@ -1,1 +1,10 @@
 __pycache__/
+**/__pycache__/*
+src/browser/__pycache__/*
+
+# DOM graph outputs
+*.dot
+*.svg
+
+# Test outputs
+example_dom_graph.*

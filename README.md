@@ -11,12 +11,22 @@ A custom web browser built from scratch following the [browser.engineering](http
 - GTK 4 development libraries (Debian: `libgtk-4-dev libgtk-4-1`)
 - Skia-Python (`skia-python`): `pip install skia-python`
 - PyGObject (`PyGObject`): `pip install PyGObject`
+- Graphviz (optional, for DOM visualization): `sudo apt install graphviz`
 
 ### Setup
 ```bash
 uv sync
 uv run bowser
 ```
+
+## Usage
+
+### Keyboard Shortcuts
+- **Ctrl+Shift+D**: Generate and visualize DOM tree graph of current page
+  - Opens visualization in a new browser tab
+  - Displays interactive SVG graph (if Graphviz installed)
+  - Falls back to DOT format if Graphviz not available
+  - Prints tree structure to console
 
 ### Testing
 Run the test suite:

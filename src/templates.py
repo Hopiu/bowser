@@ -99,3 +99,48 @@ def render_error_page(status_code: int, url: str = "", error_message: str = "") 
 def render_startpage() -> str:
     """Render the startpage."""
     return render_template("startpage.html")
+
+
+def render_dom_graph_page(graph_path: str) -> str:
+    """
+    Render the DOM graph visualization page.
+    
+    Args:
+        graph_path: Path to the SVG or DOT file
+    
+    Returns:
+        Rendered HTML with embedded graph
+    """
+    from pathlib import Path
+    
+    logger = logging.getLogger("bowser.templates")
+    graph_path_obj = Path(graph_path)
+    
+    if not graph_path_obj.exists():
+        logger.error(f"Graph file not found: {graph_path}")
+        return render_template("dom_graph.html", 
+                             error="Graph file not found",
+                             graph_content="",
+                             is_svg=False)
+    
+    try:
+        # Check file type
+        is_svg = graph_path_obj.suffix == '.svg'
+        
+        # Read the file
+        with open(graph_path, 'r', encoding='utf-8') as f:
+            graph_content = f.read()
+        
+        logger.info(f"Rendering DOM graph from {graph_path}")
+        return render_template("dom_graph.html",
+                             graph_content=graph_content,
+                             is_svg=is_svg,
+                             graph_path=str(graph_path),
+                             error=None)
+    
+    except Exception as e:
+        logger.error(f"Failed to read graph file {graph_path}: {e}")
+        return render_template("dom_graph.html",
+                             error=f"Failed to load graph: {e}",
+                             graph_content="",
+                             is_svg=False)

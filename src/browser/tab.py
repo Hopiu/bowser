@@ -28,6 +28,19 @@ class Frame:
             self.tab.current_url = url
             return
         
+        if url_str.startswith("about:dom-graph"):
+            # Extract path parameter
+            from urllib.parse import urlparse, parse_qs
+            from ..templates import render_dom_graph_page
+            parsed = urlparse(url_str)
+            params = parse_qs(parsed.query)
+            graph_path = params.get('path', [''])[0]
+            
+            html = render_dom_graph_page(graph_path)
+            self.document = parse_html(html)
+            self.tab.current_url = url
+            return
+        
         try:
             status, content_type, body = http.request(url, payload)
             

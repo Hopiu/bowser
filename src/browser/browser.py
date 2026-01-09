@@ -28,8 +28,6 @@ class Browser:
         """Called when the application is activated."""
         self._log("Application activated", logging.DEBUG)
         self.chrome.create_window()
-        # Build initial tab bar if tabs exist
-        self.chrome.rebuild_tab_bar()
 
     def new_tab(self, url: str):
         tab = Tab(self)
@@ -38,9 +36,9 @@ class Browser:
         tab.load(URL(url))
         self.tabs.append(tab)
         self.active_tab = tab
-        # Reflect in UI if available
-        if self.chrome.tabs_box:
-            self.chrome.rebuild_tab_bar()
+        # Add to UI
+        self.chrome.add_tab(tab)
+        self.chrome.update_tab(tab)  # Update title after load
         self.chrome.update_address_bar()
         self._log(f"New tab opened: {url}", logging.INFO)
         return tab
@@ -49,9 +47,8 @@ class Browser:
         if tab in self.tabs:
             self.active_tab = tab
             self._log(f"Active tab set: {tab.title}", logging.DEBUG)
-            # Update UI highlighting
-            if self.chrome.tabs_box:
-                self.chrome.rebuild_tab_bar()
+            # Update UI
+            self.chrome.set_active_tab(tab)
             # Trigger repaint of content area
             self.chrome.paint()
             self.chrome.update_address_bar()
@@ -65,11 +62,13 @@ class Browser:
         if self.active_tab is tab:
             if self.tabs:
                 self.active_tab = self.tabs[max(0, idx - 1)]
+                self.chrome.set_active_tab(self.active_tab)
             else:
                 self.active_tab = None
-        # Update UI
-        if self.chrome.tabs_box:
-            self.chrome.rebuild_tab_bar()
+                # Open a new tab when all tabs are closed
+                self.new_tab("about:startpage")
+                return  # Return early - don't try to remove a tab that's being closed
+        # Update UI (tab_pages already cleaned in _on_close_page)
         self.chrome.paint()
         self.chrome.update_address_bar()
         self._log(f"Tab closed: {tab.title}", logging.INFO)
@@ -85,6 +84,7 @@ class Browser:
             return
         self.active_tab.load(URL(url_str))
         self.chrome.paint()
+        self.chrome.update_tab(self.active_tab)  # Update title after load
         self.chrome.update_address_bar()
         self._log(f"Navigate to: {url_str}", logging.INFO)
 
@@ -103,12 +103,14 @@ class Browser:
     def go_back(self):
         if self.active_tab and self.active_tab.go_back():
             self.chrome.paint()
+            self.chrome.update_tab(self.active_tab)
             self.chrome.update_address_bar()
             self._log("Go back", logging.DEBUG)
 
     def go_forward(self):
         if self.active_tab and self.active_tab.go_forward():
             self.chrome.paint()
+            self.chrome.update_tab(self.active_tab)
             self.chrome.update_address_bar()
             self._log("Go forward", logging.DEBUG)
 
@@ -116,6 +118,7 @@ class Browser:
         if self.active_tab:
             self.active_tab.reload()
             self.chrome.paint()
+            self.chrome.update_tab(self.active_tab)
             self.chrome.update_address_bar()
             self._log("Reload", logging.DEBUG)
 
