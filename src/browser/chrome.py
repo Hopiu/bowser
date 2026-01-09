@@ -131,31 +131,101 @@ class Chrome:
             return
         self._clear_children(self.tabs_box)
 
-        # Add a button per tab with a close '×' control
+        # Add a button per tab with integrated close button
         for i, tab in enumerate(self.browser.tabs):
-            # Composite tab widget: label button + inline close button in one container
-            tab_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-            tab_container.add_css_class("linked")  # visual integration
-
-            label = f"{i+1}: {tab.title}"
-            tab_btn = Gtk.Button(label=label)
-            tab_btn.set_hexpand(False)
-            if tab is self.browser.active_tab:
-                tab_btn.add_css_class("suggested-action")
-            tab_btn.connect("clicked", partial(self.browser.set_active_tab, tab))
-
-            close_btn = Gtk.Button(label="×")
-            close_btn.add_css_class("flat")
-            close_btn.connect("clicked", partial(self.browser.close_tab, tab))
-
-            tab_container.append(tab_btn)
-            tab_container.append(close_btn)
-            self.tabs_box.append(tab_container)
+            # Create a custom tab widget with better visual integration
+            tab_widget = self._create_tab_widget(tab, i)
+            self.tabs_box.append(tab_widget)
 
         # New tab '+' button at the end
         plus_btn = Gtk.Button(label="+")
-        plus_btn.connect("clicked", lambda _b: self.browser.new_tab("https://example.com"))
+        plus_btn.set_tooltip_text("New Tab")
+        plus_btn.add_css_class("flat")
+        plus_btn.connect("clicked", lambda _b: self.browser.new_tab("about:startpage"))
         self.tabs_box.append(plus_btn)
+
+    def _create_tab_widget(self, tab, index: int) -> Gtk.Widget:
+        """Create a visually integrated tab widget with close button."""
+        # Main container for the tab
+        tab_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        tab_container.add_css_class("tab-widget")
+        
+        # Determine styling
+        is_active = tab is self.browser.active_tab
+        
+        # Tab button - shows title and handles activation
+        label = f"{index+1}: {tab.title}"
+        tab_btn = Gtk.Button(label=label)
+        tab_btn.set_hexpand(False)
+        tab_btn.add_css_class("tab-button")
+        if is_active:
+            tab_btn.add_css_class("suggested-action")
+        else:
+            tab_btn.add_css_class("flat")
+        tab_btn.set_tooltip_text(str(tab.current_url) if tab.current_url else "New Tab")
+        tab_btn.connect("clicked", partial(self.browser.set_active_tab, tab))
+        tab_container.append(tab_btn)
+        
+        # Close button - appears inline, flat styling
+        close_btn = Gtk.Button(label="✕")
+        close_btn.set_size_request(32, -1)  # Small, square button
+        close_btn.add_css_class("tab-close-button")
+        close_btn.add_css_class("flat")
+        close_btn.set_tooltip_text("Close tab")
+        close_btn.connect("clicked", partial(self._on_close_tab_clicked, tab, tab_container))
+        tab_container.append(close_btn)
+        
+        # Apply CSS styling for better visual integration
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(b"""
+            .tab-widget {
+                border-radius: 4px;
+                margin-right: 2px;
+                padding: 0px;
+                background-color: @view_bg_color;
+                border: 1px solid @borders;
+            }
+            
+            .tab-widget:hover {
+                background-color: mix(@view_bg_color, @theme_fg_color, 0.95);
+            }
+            
+            .tab-button {
+                border-radius: 4px 0px 0px 4px;
+                padding: 4px 8px;
+                border: 0px;
+                font-weight: 500;
+                min-width: 80px;
+            }
+            
+            .tab-button:focus {
+                outline: none;
+            }
+            
+            .tab-close-button {
+                border-radius: 0px 4px 4px 0px;
+                padding: 4px 4px;
+                border: 0px;
+                margin-left: -1px;
+                min-width: 32px;
+                font-size: 0.9em;
+            }
+            
+            .tab-close-button:hover {
+                background-color: @warning_color;
+                color: white;
+            }
+        """)
+        
+        context = tab_container.get_style_context()
+        context.add_provider(css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        return tab_container
+
+    def _on_close_tab_clicked(self, tab, tab_widget: Gtk.Widget):
+        """Handle tab close button click."""
+        self.browser.close_tab(tab)
+        # The widget will be removed when rebuild_tab_bar is called by browser
 
     def update_address_bar(self):
         if not self.address_bar:
