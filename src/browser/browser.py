@@ -33,6 +33,8 @@ class Browser:
 
     def new_tab(self, url: str):
         tab = Tab(self)
+        # Normalize URL to ensure https:// protocol
+        url = self._normalize_url(url)
         tab.load(URL(url))
         self.tabs.append(tab)
         self.active_tab = tab
@@ -76,6 +78,8 @@ class Browser:
     def navigate_to(self, url_str: str):
         if not url_str:
             return
+        # Add https:// if no protocol provided
+        url_str = self._normalize_url(url_str)
         if not self.active_tab:
             self.new_tab(url_str)
             return
@@ -83,6 +87,18 @@ class Browser:
         self.chrome.paint()
         self.chrome.update_address_bar()
         self._log(f"Navigate to: {url_str}", logging.INFO)
+
+    def _normalize_url(self, url_str: str) -> str:
+        """Add https:// protocol if not present."""
+        url_str = url_str.strip()
+        # If URL already has a protocol, return as-is
+        if "://" in url_str:
+            return url_str
+        # Special about: URLs
+        if url_str.startswith("about:"):
+            return url_str
+        # Otherwise, assume https://
+        return f"https://{url_str}"
 
     def go_back(self):
         if self.active_tab and self.active_tab.go_back():

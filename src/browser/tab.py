@@ -21,7 +21,8 @@ class Frame:
         logger = logging.getLogger("bowser.frame")
         
         # Handle special about: URLs
-        if url.origin == "about:startpage":
+        url_str = str(url)
+        if url_str.startswith("about:startpage"):
             html = render_startpage()
             self.document = parse_html(html)
             self.tab.current_url = url

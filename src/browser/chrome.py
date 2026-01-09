@@ -133,40 +133,13 @@ class Chrome:
         # Clear existing tabs
         self._clear_children(self.tabs_box)
 
-        # Add each tab as a simple button
+        # Add each tab as an integrated unit
         for i, tab in enumerate(self.browser.tabs):
             is_active = tab is self.browser.active_tab
             
-            # Simple container for tab label + close button
-            tab_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-            tab_box.set_homogeneous(False)
-            
-            # Tab label button
-            tab_label = f"{i+1}: {tab.title}"
-            tab_btn = Gtk.Button(label=tab_label)
-            tab_btn.set_hexpand(True)
-            tab_btn.set_relief(Gtk.ReliefStyle.NORMAL)
-            
-            if is_active:
-                tab_btn.add_css_class("suggested-action")
-            else:
-                tab_btn.add_css_class("flat")
-            
-            # Store tab reference on the button for handler
-            tab_btn.tab = tab
-            tab_btn.connect("clicked", self._on_tab_clicked)
-            tab_box.append(tab_btn)
-            
-            # Close button
-            close_btn = Gtk.Button(label="✕")
-            close_btn.set_size_request(36, -1)
-            close_btn.set_relief(Gtk.ReliefStyle.FLAT)
-            close_btn.add_css_class("flat")
-            close_btn.tab = tab
-            close_btn.connect("clicked", self._on_close_clicked)
-            tab_box.append(close_btn)
-            
-            self.tabs_box.append(tab_box)
+            # Create integrated tab widget
+            tab_widget = self._create_integrated_tab(tab, i, is_active)
+            self.tabs_box.append(tab_widget)
 
         # New tab button
         new_tab_btn = Gtk.Button(label="＋")
@@ -175,6 +148,80 @@ class Chrome:
         new_tab_btn.set_tooltip_text("New Tab")
         new_tab_btn.connect("clicked", self._on_new_tab_clicked)
         self.tabs_box.append(new_tab_btn)
+
+    def _create_integrated_tab(self, tab, index: int, is_active: bool) -> Gtk.Widget:
+        """Create an integrated tab widget with close button as one unit."""
+        # Outer container - this is the visual tab
+        tab_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        tab_container.add_css_class("integrated-tab")
+        if is_active:
+            tab_container.add_css_class("active-tab")
+        tab_container.set_homogeneous(False)
+        
+        # Left side: tab label (expandable)
+        tab_label = f"{index+1}: {tab.title}"
+        tab_btn = Gtk.Button(label=tab_label)
+        tab_btn.set_hexpand(True)
+        tab_btn.add_css_class("tab-label")
+        tab_btn.add_css_class("flat")
+        tab_btn.tab = tab
+        tab_btn.connect("clicked", self._on_tab_clicked)
+        tab_container.append(tab_btn)
+        
+        # Right side: close button (fixed width, no expand)
+        close_btn = Gtk.Button(label="✕")
+        close_btn.set_size_request(34, -1)
+        close_btn.add_css_class("tab-close")
+        close_btn.add_css_class("flat")
+        close_btn.tab = tab
+        close_btn.connect("clicked", self._on_close_clicked)
+        tab_container.append(close_btn)
+        
+        # Apply CSS styling to make it look like one unit
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .integrated-tab {
+                background-color: @theme_bg_color;
+                border: 1px solid @borders;
+                border-radius: 4px 4px 0 0;
+                margin-right: 2px;
+                padding: 0px;
+            }
+            
+            .integrated-tab.active-tab {
+                background-color: @theme_base_color;
+            }
+            
+            .tab-label {
+                padding: 6px 8px;
+                font-weight: 500;
+                border: none;
+                border-radius: 0;
+            }
+            
+            .tab-label:hover {
+                background-color: mix(@theme_bg_color, @theme_fg_color, 0.95);
+            }
+            
+            .tab-close {
+                padding: 2px 4px;
+                font-size: 0.9em;
+                border: none;
+                border-left: 1px solid @borders;
+                border-radius: 0;
+                min-width: 32px;
+            }
+            
+            .tab-close:hover {
+                background-color: @error_color;
+                color: white;
+            }
+        """)
+        
+        context = tab_container.get_style_context()
+        context.add_provider(css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        return tab_container
 
     def _on_tab_clicked(self, btn: Gtk.Button):
         """Handle tab button click - set as active."""
