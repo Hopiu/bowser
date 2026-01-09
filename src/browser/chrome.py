@@ -1,13 +1,14 @@
-"""Browser chrome (GTK UI)."""
+"""Browser chrome (Adwaita UI)."""
 
 import gi
 from typing import Optional
 import logging
-
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, Gdk, GdkPixbuf
 from functools import partial
 
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+
+from gi.repository import Gtk, Gdk, GdkPixbuf, Adw
 import skia
 
 
@@ -15,7 +16,7 @@ class Chrome:
     def __init__(self, browser):
         self.logger = logging.getLogger("bowser.chrome")
         self.browser = browser
-        self.window: Optional[Gtk.ApplicationWindow] = None
+        self.window: Optional[Adw.ApplicationWindow] = None
         self.address_bar: Optional[Gtk.Entry] = None
         self.back_btn: Optional[Gtk.Button] = None
         self.forward_btn: Optional[Gtk.Button] = None
@@ -26,46 +27,63 @@ class Chrome:
         self.skia_surface: Optional[skia.Surface] = None
 
     def create_window(self):
-        """Initialize the GTK application window."""
-        self.window = Gtk.ApplicationWindow(application=self.browser.app)
+        """Initialize the Adwaita application window."""
+        # Initialize Adwaita application
+        if not hasattr(self.browser.app, '_adw_init'):
+            Adw.init()
+            self.browser.app._adw_init = True
+        
+        # Create Adwaita window instead of standard GTK window
+        self.window = Adw.ApplicationWindow(application=self.browser.app)
         self.window.set_default_size(1024, 768)
         self.window.set_title("Bowser")
 
-        # Main vertical box
+        # Main vertical box for the window structure
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.window.set_child(vbox)
+        self.window.set_content(vbox)
 
-        # Top bar: address bar + buttons
-        top_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-        top_bar.set_margin_top(5)
-        top_bar.set_margin_bottom(5)
-        top_bar.set_margin_start(5)
-        top_bar.set_margin_end(5)
-
+        # Header bar with navigation and address bar
+        header_bar = Gtk.HeaderBar()
+        vbox.append(header_bar)
+        
+        # Navigation buttons in header bar
+        nav_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        nav_box.add_css_class("linked")
+        
         self.back_btn = Gtk.Button(label="◀")
+        self.back_btn.set_tooltip_text("Back")
         self.forward_btn = Gtk.Button(label="▶")
+        self.forward_btn.set_tooltip_text("Forward")
         self.reload_btn = Gtk.Button(label="⟳")
-
+        self.reload_btn.set_tooltip_text("Reload")
+        
+        nav_box.append(self.back_btn)
+        nav_box.append(self.forward_btn)
+        nav_box.append(self.reload_btn)
+        header_bar.pack_start(nav_box)
+        
+        # Address bar - centered in header
         self.address_bar = Gtk.Entry()
-        self.address_bar.set_text("https://example.com")
+        self.address_bar.set_placeholder_text("Enter URL...")
         self.address_bar.set_hexpand(True)
-
+        self.address_bar.set_max_width_chars(40)
+        header_bar.set_title_widget(self.address_bar)
+        
+        # Go button in header bar end
         self.go_btn = Gtk.Button(label="Go")
-
-        top_bar.append(self.back_btn)
-        top_bar.append(self.forward_btn)
-        top_bar.append(self.reload_btn)
-        top_bar.append(self.address_bar)
-        top_bar.append(self.go_btn)
-
-        vbox.append(top_bar)
+        self.go_btn.add_css_class("suggested-action")
+        header_bar.pack_end(self.go_btn)
 
         # Tabs bar: contains tab buttons and a new-tab button
         self.tabs_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.tabs_box.set_margin_start(5)
-        self.tabs_box.set_margin_end(5)
-        self.tabs_box.set_margin_bottom(4)
-        vbox.append(self.tabs_box)
+        self.tabs_box.set_margin_start(8)
+        self.tabs_box.set_margin_end(8)
+        self.tabs_box.set_margin_top(6)
+        self.tabs_box.set_margin_bottom(6)
+        
+        tabs_frame = Gtk.Frame()
+        tabs_frame.set_child(self.tabs_box)
+        vbox.append(tabs_frame)
 
         # Drawing area for content
         self.drawing_area = Gtk.DrawingArea()
@@ -74,11 +92,15 @@ class Chrome:
         self.drawing_area.set_draw_func(self.on_draw)
         vbox.append(self.drawing_area)
 
-        # Status bar
+        # Status bar with Adwaita styling
+        status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        status_box.add_css_class("toolbar")
         status_bar = Gtk.Label(label="Ready")
         status_bar.set_xalign(0)
-        status_bar.set_margin_start(5)
-        vbox.append(status_bar)
+        status_bar.set_margin_start(8)
+        status_bar.set_margin_end(8)
+        status_box.append(status_bar)
+        vbox.append(status_box)
 
         self.window.present()
         # Build initial tab bar now that window exists

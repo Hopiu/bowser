@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "Bowser", email = "bowser@example.com"}]
 dependencies = [
-    "PyGObject>=3.54.0",  # GTK+ bindings for Python
+    "PyGObject>=3.54.0",  # GTK+ bindings for Python (includes Adwaita via GI)
     "skia-python>=87.9",  # Skia 2D graphics library
     "Jinja2>=3.0",  # Template engine for pages
 ]
