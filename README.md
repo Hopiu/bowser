@@ -18,6 +18,37 @@ uv sync
 uv run bowser
 ```
 
+### Testing
+Run the test suite:
+```bash
+# Install dev dependencies
+uv sync --extra dev
+
+# Run all tests
+uv run pytest
+
+# Run with verbose output
+uv run pytest -v
+
+# Run with coverage report
+uv run pytest --cov=src --cov-report=html
+
+# Run specific test file
+uv run pytest tests/test_browser.py
+```
+
+### Development
+```bash
+# Format code
+uv run black src tests
+
+# Lint code
+uv run ruff check src tests
+
+# Type check
+uv run mypy src
+```
+
 ## Project Structure
 
 ```
