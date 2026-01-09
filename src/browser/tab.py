@@ -6,6 +6,7 @@ import logging
 from ..network.url import URL
 from ..network import http
 from ..parser.html import parse_html, Element
+from ..templates import render_startpage, render_error_page
 
 
 class Frame:
@@ -17,6 +18,15 @@ class Frame:
 
     def load(self, url: URL, payload: Optional[bytes] = None):
         """Fetch and parse the URL content."""
+        logger = logging.getLogger("bowser.frame")
+        
+        # Handle special about: URLs
+        if url.origin == "about:startpage":
+            html = render_startpage()
+            self.document = parse_html(html)
+            self.tab.current_url = url
+            return
+        
         try:
             status, content_type, body = http.request(url, payload)
             
@@ -29,14 +39,14 @@ class Frame:
                 self.tab.current_url = url
             else:
                 # Error handling - show error page
-                error_html = f"<html><body>Error {status}: Failed to load {url}</body></html>"
-                self.document = parse_html(error_html)
+                html = render_error_page(status, str(url))
+                self.document = parse_html(html)
                 
         except Exception as e:
             # Network error - show error page
-            error_html = f"<html><body>Network Error: {e}</body></html>"
-            self.document = parse_html(error_html)
-            logging.getLogger("bowser.tab").error(f"Failed to load {url}: {e}")
+            html = render_error_page(0, str(url), str(e))
+            self.document = parse_html(html)
+            logger.error(f"Failed to load {url}: {e}")
 
 
 class Tab:

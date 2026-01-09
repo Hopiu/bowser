@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bowser Start Page</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            text-align: center;
+            color: white;
+            max-width: 600px;
+            padding: 40px;
+        }
+        
+        h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .logo {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        
+        p {
+            font-size: 18px;
+            line-height: 1.6;
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+        
+        .features {
+            text-align: left;
+            background: rgba(255,255,255,0.1);
+            padding: 30px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .features li {
+            list-style: none;
+            margin: 10px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+        
+        .features li:before {
+            content: "→";
+            position: absolute;
+            left: 0;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        
+        .footer {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-top: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🌐</div>
+        <h1>Welcome to Bowser</h1>
+        <p>An educational web browser built from scratch for learning how browsers work.</p>
+        
+        <input type="text" placeholder="Enter a URL to get started...">
+        
+        <div class="features">
+            <ul>
+                <li>Built with Python and GTK</li>
+                <li>Implementing browser.engineering curriculum</li>
+                <li>Learning HTTP, HTML parsing, CSS, and JavaScript</li>
+                <li>Incremental feature development</li>
+            </ul>
+        </div>
+        
+        <div class="footer">
+            <p>Bowser v{{ version }}</p>
+            <p>Made for educational purposes</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 - Page Not Found</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            text-align: center;
+            color: white;
+            max-width: 600px;
+            padding: 40px;
+        }
+        
+        .error-code {
+            font-size: 120px;
+            font-weight: bold;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            margin: 0;
+        }
+        
+        h1 {
+            font-size: 36px;
+            margin: 20px 0;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        p {
+            font-size: 18px;
+            line-height: 1.6;
+            margin: 20px 0;
+            opacity: 0.9;
+        }
+        
+        .url {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 4px;
+            word-break: break-all;
+            margin: 20px 0;
+            font-family: monospace;
+        }
+        
+        .actions {
+            margin-top: 40px;
+        }
+        
+        .btn {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 4px;
+            text-decoration: none;
+            margin: 10px;
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+        
+        .btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        .footer {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-top: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p class="error-code">404</p>
+        <h1>Page Not Found</h1>
+        <p>The page you were looking for could not be found on this server.</p>
+        <div class="url">{{ url }}</div>
+        
+        {% if error_message %}
+        <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 4px; margin: 20px 0;">
+            <p>{{ error_message }}</p>
+        </div>
+        {% endif %}
+        
+        <p>This could happen if:</p>
+        <ul style="text-align: left; display: inline-block; margin: 20px 0;">
+            <li>The URL is incorrect or has a typo</li>
+            <li>The page has been moved or deleted</li>
+            <li>The server is not responding correctly</li>
+        </ul>
+        
+        <div class="actions">
+            <a href="about:startpage" class="btn">← Go to Start Page</a>
+            <a href="#" class="btn">↶ Reload</a>
+        </div>
+        
+        <div class="footer">
+            <p>Error 404 | Bowser Browser</p>
+        </div>
+    </div>
+</body>
+</html>

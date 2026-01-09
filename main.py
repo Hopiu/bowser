@@ -7,7 +7,7 @@ from src.browser.browser import Browser
 
 def _parse_args():
     parser = argparse.ArgumentParser(prog="bowser", description="Bowser educational browser")
-    parser.add_argument("url", nargs="?", default="https://example.com", help="URL to open")
+    parser.add_argument("url", nargs="?", default=None, help="URL to open (optional, defaults to startpage)")
     parser.add_argument("--debug", action="store_true", help="Enable debug output (alias for --log-level=DEBUG)")
     parser.add_argument(
         "--log-level",
@@ -32,7 +32,9 @@ def main():
     _configure_logging(args)
 
     browser = Browser()
-    browser.new_tab(args.url)
+    # If no URL provided, use startpage
+    url = args.url if args.url else "about:startpage"
+    browser.new_tab(url)
     browser.run()
 
 
