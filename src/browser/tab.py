@@ -4,6 +4,8 @@ from typing import Optional
 import logging
 
 from ..network.url import URL
+from ..network import http
+from ..parser.html import parse_html, Element
 
 
 class Frame:
@@ -11,10 +13,30 @@ class Frame:
         self.tab = tab
         self.parent_frame = parent_frame
         self.frame_element = frame_element
+        self.document: Optional[Element] = None
 
     def load(self, url: URL, payload: Optional[bytes] = None):
-        # TODO: integrate network + parsing + layout + render pipeline
-        self.tab.current_url = url
+        """Fetch and parse the URL content."""
+        try:
+            status, content_type, body = http.request(url, payload)
+            
+            if status == 200:
+                # Decode response
+                text = body.decode('utf-8', errors='replace')
+                
+                # Parse HTML
+                self.document = parse_html(text)
+                self.tab.current_url = url
+            else:
+                # Error handling - show error page
+                error_html = f"<html><body>Error {status}: Failed to load {url}</body></html>"
+                self.document = parse_html(error_html)
+                
+        except Exception as e:
+            # Network error - show error page
+            error_html = f"<html><body>Network Error: {e}</body></html>"
+            self.document = parse_html(error_html)
+            logging.getLogger("bowser.tab").error(f"Failed to load {url}: {e}")
 
 
 class Tab:

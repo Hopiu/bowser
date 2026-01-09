@@ -161,15 +161,19 @@ class Chrome:
         # White background
         canvas.clear(skia.ColorWHITE)
 
-        # Draw placeholder text
-        paint = skia.Paint()
-        paint.setAntiAlias(True)
-        paint.setColor(skia.ColorBLACK)
-        font = skia.Font(skia.Typeface.MakeDefault(), 20)
-        canvas.drawString("Bowser — M1: Hello World", 20, 50, font, paint)
-
-        # Paint render stats
-        canvas.drawString(f"Window: {width}x{height}", 20, 80, font, paint)
+        # Get content to render
+        content_text = self._get_content_text()
+        
+        if content_text:
+            # Render actual page content with text wrapping
+            self._render_text_content(canvas, content_text, width, height)
+        else:
+            # Show placeholder
+            paint = skia.Paint()
+            paint.setAntiAlias(True)
+            paint.setColor(skia.ColorBLACK)
+            font = skia.Font(skia.Typeface.MakeDefault(), 20)
+            canvas.drawString("Bowser — Enter a URL to browse", 20, 50, font, paint)
 
         # Convert Skia surface to GTK Pixbuf and blit to Cairo context
         image = self.skia_surface.makeImageSnapshot()
@@ -187,6 +191,71 @@ class Chrome:
         Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
         context.paint()
         self.logger.debug("on_draw end")
+    
+    def _get_content_text(self) -> str:
+        """Extract text content from active tab's document."""
+        if not self.browser.active_tab:
+            return ""
+        
+        frame = self.browser.active_tab.main_frame
+        if not frame.document:
+            return ""
+        
+        # Extract text from document tree
+        return self._extract_text(frame.document)
+    
+    def _extract_text(self, node) -> str:
+        """Recursively extract text from HTML tree."""
+        from ..parser.html import Text, Element
+        
+        if isinstance(node, Text):
+            return node.text
+        elif isinstance(node, Element):
+            texts = []
+            for child in node.children:
+                texts.append(self._extract_text(child))
+            return " ".join(texts)
+        return ""
+    
+    def _render_text_content(self, canvas, text: str, width: int, height: int):
+        """Render text content with basic word wrapping."""
+        paint = skia.Paint()
+        paint.setAntiAlias(True)
+        paint.setColor(skia.ColorBLACK)
+        
+        font_size = 14
+        font = skia.Font(skia.Typeface.MakeDefault(), font_size)
+        
+        # Simple word wrapping
+        words = text.split()
+        lines = []
+        current_line = []
+        current_width = 0
+        max_width = width - 40  # 20px margin on each side
+        
+        for word in words:
+            word_width = font.measureText(word + " ")
+            
+            if current_width + word_width > max_width and current_line:
+                lines.append(" ".join(current_line))
+                current_line = [word]
+                current_width = word_width
+            else:
+                current_line.append(word)
+                current_width += word_width
+        
+        if current_line:
+            lines.append(" ".join(current_line))
+        
+        # Draw lines
+        y = 30
+        line_height = font_size * 1.4
+        
+        for line in lines:
+            if y > height - 20:  # Don't draw past bottom
+                break
+            canvas.drawString(line, 20, y, font, paint)
+            y += line_height
 
     def paint(self):
         """Trigger redraw of the drawing area."""
