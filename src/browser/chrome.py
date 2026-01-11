@@ -5,12 +5,17 @@ from typing import Optional
 import logging
 import cairo
 import time
+from pathlib import Path
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 from gi.repository import Gtk, Gdk, Adw
 import skia
+
+# Import the render and layout packages
+from ..render.fonts import get_font
+from ..layout.document import DocumentLayout
 
 
 class Chrome:
@@ -56,19 +61,14 @@ class Chrome:
         self.is_selecting = False    # True while mouse is dragging
         
         # Layout information for text selection
-        # Each entry: {text, x, y, width, height, font_size, font, char_positions}
+        # Each entry: {text, x, y, width, height, font_size, char_positions}
         # char_positions is a list of x offsets for each character
         self.text_layout = []
         
         # Layout cache to avoid recalculation on scroll
         self._layout_cache_width = 0
         self._layout_cache_doc_id = None
-        self._layout_blocks = []  # Cached processed blocks
         self._layout_rects = []   # Cached debug rects
-        
-        # Font cache to avoid recreating fonts every frame
-        self._font_cache = {}  # {font_size: skia.Font}
-        self._default_typeface = None
         
         # Paint cache
         self._text_paint = None
@@ -328,9 +328,7 @@ class Chrome:
             self.browser.navigate_to(self.address_bar.get_text())
 
     def on_draw(self, drawing_area, context, width, height):
-        """Callback for drawing the content area using Skia."""
-        import time
-        
+        """Callback for drawing the content area using Skia."""        
         # Track frame time for FPS calculation
         current_time = time.time()
         self.frame_times.append(current_time)
@@ -416,12 +414,6 @@ class Chrome:
 
         sub_timings = {}
         
-        t0 = time.perf_counter()
-        body = self._find_body(document)
-        if not body:
-            return
-        sub_timings['find_body'] = time.perf_counter() - t0
-
         # Check if we need to rebuild layout cache
         t0 = time.perf_counter()
         doc_id = id(document)
@@ -432,11 +424,14 @@ class Chrome:
         )
         
         if needs_rebuild:
-            self._rebuild_layout(body, width)
+            self._rebuild_layout(document, width)
             self._layout_cache_doc_id = doc_id
             self._layout_cache_width = width
             self.logger.debug(f"Layout rebuilt: {len(self.text_layout)} lines")
         sub_timings['layout_check'] = time.perf_counter() - t0
+        
+        if not self.text_layout:
+            return
         
         # Apply scroll offset
         t0 = time.perf_counter()
@@ -489,156 +484,45 @@ class Chrome:
     
     def _get_font(self, size: int):
         """Get a cached font for the given size."""
-        if size not in self._font_cache:
-            if self._default_typeface is None:
-                self._default_typeface = skia.Typeface.MakeDefault()
-            self._font_cache[size] = skia.Font(self._default_typeface, size)
-        return self._font_cache[size]
+        return get_font(size)
     
     def _rebuild_layout(self, body, width: int):
-        """Rebuild the layout cache for text positioning."""
+        """Rebuild the layout cache for text positioning using DocumentLayout."""
         self.text_layout = []
         self._layout_rects = []
         
-        blocks = self._collect_blocks(body)
-
+        # Use the new DocumentLayout for layout calculation
+        doc_layout = DocumentLayout(body)
+        layout_lines = doc_layout.layout(width)
+        
+        # Convert LayoutLine objects to text_layout format
         x_margin = 20
         max_width = max(10, width - 2 * x_margin)
-        y = 30
-
-        for block in blocks:
-            font_size = block.get("font_size", 14)
-            font = self._get_font(font_size)
-            text = block.get("text", "")
-            if not text:
-                y += font_size * 0.6
-                continue
-
-            # Optional bullet prefix
-            if block.get("bullet"):
-                text = f"• {text}"
-
-            # Word wrapping per block
-            words = text.split()
-            lines = []
-            current_line = []
-            current_width = 0
-            for word in words:
-                word_width = font.measureText(word + " ")
-                if current_width + word_width > max_width and current_line:
-                    lines.append(" ".join(current_line))
-                    current_line = [word]
-                    current_width = word_width
-                else:
-                    current_line.append(word)
-                    current_width += word_width
-            if current_line:
-                lines.append(" ".join(current_line))
-
-            line_height = font_size * 1.4
-            top_margin = block.get("margin_top", 6)
-            y += top_margin
-            
-            block_start_y = y
-            for line in lines:
-                # Calculate character positions for precise selection
-                char_positions = [0.0]  # Start at 0
-                for i in range(1, len(line) + 1):
-                    char_positions.append(font.measureText(line[:i]))
-                
-                # Store text layout for selection
-                line_width = font.measureText(line)
-                self.text_layout.append({
-                    "text": line,
-                    "x": x_margin,
-                    "y": y - font_size,  # Top of line
-                    "width": line_width,
-                    "height": line_height,
-                    "font_size": font_size,
-                    "char_positions": char_positions
-                })
-                
-                y += line_height
-            
-            block_end_y = y
-            y += block.get("margin_bottom", 10)
-            
-            # Store layout for debug mode
-            block_type = block.get("block_type", "block")
+        
+        for line in layout_lines:
+            self.text_layout.append({
+                "text": line.text,
+                "x": line.x,
+                "y": line.y,  # Top of line
+                "width": line.width,
+                "height": line.height,
+                "font_size": line.font_size,
+                "char_positions": line.char_positions
+            })
+        
+        # Build layout rects for debug mode from blocks
+        for block in doc_layout.blocks:
             self._layout_rects.append({
-                "x": x_margin - 5,
-                "y": block_start_y - font_size,
-                "width": max_width + 10,
-                "height": block_end_y - block_start_y + 5,
-                "type": block_type
+                "x": block.x - 5,
+                "y": block.y - block.lines[0].font_size if block.lines else block.y,
+                "width": block.width + 10,
+                "height": block.height + 5,
+                "type": block.block_type
             })
         
         # Store total document height
-        self.document_height = y + 50  # Add some padding at the bottom
+        self.document_height = doc_layout.height
 
-    def _find_body(self, document):
-        from ..parser.html import Element
-        if isinstance(document, Element) and document.tag == "body":
-            return document
-        if hasattr(document, "children"):
-            for child in document.children:
-                if isinstance(child, Element) and child.tag == "body":
-                    return child
-                found = self._find_body(child)
-                if found:
-                    return found
-        return None
-
-    def _collect_blocks(self, node):
-        """Flatten DOM into renderable blocks with basic styling."""
-        from ..parser.html import Element, Text
-
-        blocks = []
-
-        def text_of(n):
-            if isinstance(n, Text):
-                return n.text
-            if isinstance(n, Element):
-                parts = []
-                for c in n.children:
-                    parts.append(text_of(c))
-                return " ".join([p for p in parts if p]).strip()
-            return ""
-
-        for child in getattr(node, "children", []):
-            if isinstance(child, Text):
-                txt = child.text.strip()
-                if txt:
-                    blocks.append({"text": txt, "font_size": 14})
-                continue
-
-            if isinstance(child, Element):
-                tag = child.tag.lower()
-                content = text_of(child)
-                if not content:
-                    continue
-
-                if tag == "h1":
-                    blocks.append({"text": content, "font_size": 24, "margin_top": 12, "margin_bottom": 12, "block_type": "block", "tag": "h1"})
-                elif tag == "h2":
-                    blocks.append({"text": content, "font_size": 20, "margin_top": 10, "margin_bottom": 10, "block_type": "block", "tag": "h2"})
-                elif tag == "h3":
-                    blocks.append({"text": content, "font_size": 18, "margin_top": 8, "margin_bottom": 8, "block_type": "block", "tag": "h3"})
-                elif tag == "p":
-                    blocks.append({"text": content, "font_size": 14, "margin_top": 6, "margin_bottom": 12, "block_type": "block", "tag": "p"})
-                elif tag == "li":
-                    blocks.append({"text": content, "font_size": 14, "bullet": True, "margin_top": 4, "margin_bottom": 4, "block_type": "list-item", "tag": "li"})
-                elif tag in {"ul", "ol"}:
-                    blocks.extend(self._collect_blocks(child))
-                elif tag in {"span", "a", "strong", "em", "b", "i", "code"}:
-                    # Inline elements
-                    blocks.append({"text": content, "font_size": 14, "block_type": "inline", "tag": tag})
-                else:
-                    # Generic element: render text
-                    blocks.append({"text": content, "font_size": 14, "block_type": "block", "tag": tag})
-
-        return blocks
-    
     def _draw_selection_highlight(self, canvas, width: int):
         """Draw selection highlight rectangle."""
         if not self.selection_start or not self.selection_end:
@@ -662,8 +546,6 @@ class Chrome:
     
     def _draw_debug_overlays(self, canvas, layout_rects: list, document):
         """Draw debug overlays showing element boxes."""
-        from ..parser.html import Element, Text
-        
         # Color scheme for different element types
         colors = {
             "block": skia.Color(255, 0, 0, 60),      # Red - block elements
@@ -1128,8 +1010,6 @@ class Chrome:
     def _show_dom_graph(self):
         """Generate and display DOM graph for current tab."""
         from ..debug.dom_graph import render_dom_graph_to_svg, save_dom_graph, print_dom_tree
-        import os
-        from pathlib import Path
         
         if not self.browser.active_tab:
             self.logger.warning("No active tab to visualize")

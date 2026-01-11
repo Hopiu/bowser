@@ -8,3 +8,8 @@ src/browser/__pycache__/*
 
 # Test outputs
 example_dom_graph.*
+
+*.pyc
+src/browser/__pycache__/browser.cpython-313.pyc
+src/browser/__pycache__/chrome.cpython-313.pyc
+src/browser/__pycache__/tab.cpython-313.pyc
