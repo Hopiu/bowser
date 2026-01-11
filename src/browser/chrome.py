@@ -3,12 +3,12 @@
 import gi
 from typing import Optional
 import logging
-from functools import partial
+import cairo
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Gtk, Gdk, GdkPixbuf, Adw
+from gi.repository import Gtk, Gdk, Adw
 import skia
 
 
@@ -36,6 +36,10 @@ class Chrome:
         self.frame_times = []  # List of recent frame timestamps
         self.fps = 0.0
         
+        # Profiling data
+        self._last_profile = {}
+        self._last_profile_total = 0.0
+        
         # Scroll state
         self.scroll_y = 0
         self.document_height = 0  # Total document height for scroll limits
@@ -54,6 +58,16 @@ class Chrome:
         # Each entry: {text, x, y, width, height, font_size, font, char_positions}
         # char_positions is a list of x offsets for each character
         self.text_layout = []
+        
+        # Layout cache to avoid recalculation on scroll
+        self._layout_cache_width = 0
+        self._layout_cache_doc_id = None
+        self._layout_blocks = []  # Cached processed blocks
+        self._layout_rects = []   # Cached debug rects
+        
+        # Font cache to avoid recreating fonts every frame
+        self._font_cache = {}  # {font_size: skia.Font}
+        self._default_typeface = None
 
     def create_window(self):
         """Initialize the Adwaita application window."""
@@ -317,50 +331,77 @@ class Chrome:
         if len(self.frame_times) > 1:
             self.fps = len(self.frame_times)
         
-        self.logger.debug(f"on_draw start {width}x{height}")
+        # Profiling timers
+        profile_start = time.perf_counter()
+        timings = {}
+        
         # Create Skia surface for this frame
+        t0 = time.perf_counter()
         self.skia_surface = skia.Surface(width, height)
         canvas = self.skia_surface.getCanvas()
+        timings['surface_create'] = time.perf_counter() - t0
         
         # Store viewport height
         self.viewport_height = height
 
         # White background
+        t0 = time.perf_counter()
         canvas.clear(skia.ColorWHITE)
+        timings['clear'] = time.perf_counter() - t0
 
         # Render DOM content
         frame = self.browser.active_tab.main_frame if self.browser.active_tab else None
         document = frame.document if frame else None
         if document:
+            t0 = time.perf_counter()
             self._render_dom_content(canvas, document, width, height)
-            # Draw scrollbar on top (in screen coordinates, not scrolled)
+            timings['render_dom'] = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
             self._draw_scrollbar(canvas, width, height)
-            # Draw FPS counter in debug mode
+            timings['scrollbar'] = time.perf_counter() - t0
+            
             if self.debug_mode:
                 self._draw_fps_counter(canvas, width)
         else:
             paint = skia.Paint()
             paint.setAntiAlias(True)
             paint.setColor(skia.ColorBLACK)
-            font = skia.Font(skia.Typeface.MakeDefault(), 20)
+            font = self._get_font(20)
             canvas.drawString("Bowser — Enter a URL to browse", 20, 50, font, paint)
 
-        # Convert Skia surface to GTK Pixbuf and blit to Cairo context
+        # Get raw pixel data from Skia surface
+        t0 = time.perf_counter()
         image = self.skia_surface.makeImageSnapshot()
-        png_data = image.encodeToData().bytes()
-
-        # Load PNG data into a Pixbuf
-        from io import BytesIO
-
-        loader = GdkPixbuf.PixbufLoader.new_with_type("png")
-        loader.write(png_data)
-        loader.close()
-        pixbuf = loader.get_pixbuf()
-
-        # Render pixbuf to Cairo context
-        Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+        timings['snapshot'] = time.perf_counter() - t0
+        
+        t0 = time.perf_counter()
+        pixels = image.tobytes()
+        timings['tobytes'] = time.perf_counter() - t0
+        
+        # Create Cairo ImageSurface from raw pixels
+        t0 = time.perf_counter()
+        cairo_surface = cairo.ImageSurface.create_for_data(
+            bytearray(pixels),
+            cairo.FORMAT_ARGB32,
+            width,
+            height,
+            width * 4  # stride
+        )
+        timings['cairo_surface'] = time.perf_counter() - t0
+        
+        # Blit Cairo surface to context
+        t0 = time.perf_counter()
+        context.set_source_surface(cairo_surface, 0, 0)
         context.paint()
-        self.logger.debug("on_draw end")
+        timings['cairo_blit'] = time.perf_counter() - t0
+        
+        total_time = time.perf_counter() - profile_start
+        
+        # Store profiling data for debug display
+        if self.debug_mode:
+            self._last_profile = timings
+            self._last_profile_total = total_time
     
     def _render_dom_content(self, canvas, document, width: int, height: int):
         """Render a basic DOM tree with headings, paragraphs, and lists."""
@@ -370,28 +411,74 @@ class Chrome:
         if not body:
             return
 
-        # Clear text layout for this render
-        self.text_layout = []
+        # Check if we need to rebuild layout cache
+        doc_id = id(document)
+        needs_rebuild = (
+            self._layout_cache_doc_id != doc_id or
+            self._layout_cache_width != width or
+            not self.text_layout
+        )
+        
+        if needs_rebuild:
+            self._rebuild_layout(body, width)
+            self._layout_cache_doc_id = doc_id
+            self._layout_cache_width = width
+            self.logger.debug(f"Layout rebuilt: {len(self.text_layout)} lines")
         
         # Apply scroll offset
         canvas.save()
         canvas.translate(0, -self.scroll_y)
         
-        blocks = self._collect_blocks(body)
         paint = skia.Paint()
         paint.setAntiAlias(True)
         paint.setColor(skia.ColorBLACK)
+        
+        # Only draw visible lines
+        visible_top = self.scroll_y - 50
+        visible_bottom = self.scroll_y + height + 50
+        
+        visible_count = 0
+        for line_info in self.text_layout:
+            line_y = line_info["y"] + line_info["font_size"]  # Baseline y
+            if line_y < visible_top or line_y - line_info["height"] > visible_bottom:
+                continue
+            
+            visible_count += 1
+            font = self._get_font(line_info["font_size"])
+            canvas.drawString(line_info["text"], line_info["x"], line_y, font, paint)
+        
+        # Draw selection highlight
+        if self.selection_start and self.selection_end:
+            self._draw_text_selection(canvas)
+        
+        # Draw debug overlays
+        if self.debug_mode:
+            self._draw_debug_overlays(canvas, self._layout_rects, document)
+        
+        canvas.restore()
+    
+    def _get_font(self, size: int):
+        """Get a cached font for the given size."""
+        if size not in self._font_cache:
+            if self._default_typeface is None:
+                self._default_typeface = skia.Typeface.MakeDefault()
+            self._font_cache[size] = skia.Font(self._default_typeface, size)
+        return self._font_cache[size]
+    
+    def _rebuild_layout(self, body, width: int):
+        """Rebuild the layout cache for text positioning."""
+        self.text_layout = []
+        self._layout_rects = []
+        
+        blocks = self._collect_blocks(body)
 
         x_margin = 20
         max_width = max(10, width - 2 * x_margin)
         y = 30
 
-        # Track layout for debug mode
-        layout_rects = []
-
         for block in blocks:
             font_size = block.get("font_size", 14)
-            font = skia.Font(skia.Typeface.MakeDefault(), font_size)
+            font = self._get_font(font_size)
             text = block.get("text", "")
             if not text:
                 y += font_size * 0.6
@@ -424,11 +511,6 @@ class Chrome:
             
             block_start_y = y
             for line in lines:
-                # Only render if visible (accounting for scroll)
-                visible_y = y - self.scroll_y
-                if visible_y > -50 and visible_y < height + 50:
-                    canvas.drawString(line, x_margin, y, font, paint)
-                
                 # Calculate character positions for precise selection
                 char_positions = [0.0]  # Start at 0
                 for i in range(1, len(line) + 1):
@@ -452,28 +534,17 @@ class Chrome:
             y += block.get("margin_bottom", 10)
             
             # Store layout for debug mode
-            if self.debug_mode:
-                block_type = block.get("block_type", "block")
-                layout_rects.append({
-                    "x": x_margin - 5,
-                    "y": block_start_y - font_size,
-                    "width": max_width + 10,
-                    "height": block_end_y - block_start_y + 5,
-                    "type": block_type
-                })
+            block_type = block.get("block_type", "block")
+            self._layout_rects.append({
+                "x": x_margin - 5,
+                "y": block_start_y - font_size,
+                "width": max_width + 10,
+                "height": block_end_y - block_start_y + 5,
+                "type": block_type
+            })
         
         # Store total document height
         self.document_height = y + 50  # Add some padding at the bottom
-        
-        # Draw selection highlight based on text layout
-        if self.selection_start and self.selection_end:
-            self._draw_text_selection(canvas)
-        
-        # Draw debug overlays
-        if self.debug_mode:
-            self._draw_debug_overlays(canvas, layout_rects, document)
-        
-        canvas.restore()
 
     def _find_body(self, document):
         from ..parser.html import Element
@@ -610,7 +681,7 @@ class Chrome:
         legend_x = 10
         legend_y = self.scroll_y + 10
         
-        font = skia.Font(skia.Typeface.MakeDefault(), 11)
+        font = self._get_font(11)
         
         # Background
         bg_paint = skia.Paint()
@@ -639,32 +710,73 @@ class Chrome:
             y_offset += 18
     
     def _draw_fps_counter(self, canvas, width: int):
-        """Draw FPS counter in top-right corner."""
-        # Position in top-right
-        fps_x = width - 80
-        fps_y = 10
+        """Draw FPS counter and profiling info in top-right corner."""
+        font = self._get_font(11)
+        small_font = self._get_font(9)
         
-        font = skia.Font(skia.Typeface.MakeDefault(), 14)
+        # Calculate panel size based on profile data
+        panel_width = 180
+        num_profile_lines = len(self._last_profile) + 2  # +2 for FPS and total
+        panel_height = 18 + num_profile_lines * 12
+        
+        # Position in top-right
+        panel_x = width - panel_width - 10
+        panel_y = 10
         
         # Background
         bg_paint = skia.Paint()
-        bg_paint.setColor(skia.Color(0, 0, 0, 180))
+        bg_paint.setColor(skia.Color(0, 0, 0, 200))
         bg_paint.setStyle(skia.Paint.kFill_Style)
-        canvas.drawRect(skia.Rect.MakeLTRB(fps_x - 5, fps_y, fps_x + 75, fps_y + 25), bg_paint)
+        canvas.drawRect(skia.Rect.MakeLTRB(
+            panel_x, panel_y, 
+            panel_x + panel_width, panel_y + panel_height
+        ), bg_paint)
         
-        # FPS text with color based on performance
         text_paint = skia.Paint()
         text_paint.setAntiAlias(True)
         
+        # FPS with color
         if self.fps >= 50:
-            text_paint.setColor(skia.Color(100, 255, 100, 255))  # Green
+            text_paint.setColor(skia.Color(100, 255, 100, 255))
         elif self.fps >= 30:
-            text_paint.setColor(skia.Color(255, 255, 100, 255))  # Yellow
+            text_paint.setColor(skia.Color(255, 255, 100, 255))
         else:
-            text_paint.setColor(skia.Color(255, 100, 100, 255))  # Red
+            text_paint.setColor(skia.Color(255, 100, 100, 255))
         
-        fps_text = f"FPS: {self.fps:.0f}"
-        canvas.drawString(fps_text, fps_x, fps_y + 17, font, text_paint)
+        y = panel_y + 14
+        canvas.drawString(f"FPS: {self.fps:.0f}", panel_x + 5, y, font, text_paint)
+        
+        # Total frame time
+        text_paint.setColor(skia.ColorWHITE)
+        total_ms = self._last_profile_total * 1000
+        y += 14
+        canvas.drawString(f"Frame: {total_ms:.1f}ms", panel_x + 5, y, font, text_paint)
+        
+        # Profile breakdown
+        if self._last_profile:
+            gray_paint = skia.Paint()
+            gray_paint.setAntiAlias(True)
+            gray_paint.setColor(skia.Color(180, 180, 180, 255))
+            
+            # Sort by time descending
+            sorted_items = sorted(
+                self._last_profile.items(), 
+                key=lambda x: x[1], 
+                reverse=True
+            )
+            
+            for name, duration in sorted_items:
+                y += 12
+                ms = duration * 1000
+                pct = (duration / self._last_profile_total * 100) if self._last_profile_total > 0 else 0
+                # Color code: red if >50% of frame time
+                if pct > 50:
+                    gray_paint.setColor(skia.Color(255, 150, 150, 255))
+                elif pct > 25:
+                    gray_paint.setColor(skia.Color(255, 220, 150, 255))
+                else:
+                    gray_paint.setColor(skia.Color(180, 180, 180, 255))
+                canvas.drawString(f"{name}: {ms:.1f}ms ({pct:.0f}%)", panel_x + 8, y, small_font, gray_paint)
 
     def paint(self):
         """Trigger redraw of the drawing area."""
