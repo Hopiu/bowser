@@ -39,10 +39,17 @@ class _DOMBuilder(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=False)
         self.root = Element("html")
-        self.body = Element("body", parent=self.root)
-        self.root.children.append(self.body)
-        self.current = self.body
+        self.current = self.root
         self._skip_depth = 0  # for script/style skipping
+        self._body = None  # The body element (real or implicit)
+
+    def _ensure_body(self):
+        """Ensure we have a body element to add content to."""
+        if self._body is None:
+            self._body = Element("body", parent=self.root)
+            self.root.children.append(self._body)
+        if self.current is self.root:
+            self.current = self._body
 
     # Helpers
     def _push(self, el: Element):
@@ -54,10 +61,10 @@ class _DOMBuilder(HTMLParser):
         node = self.current
         while node and node is not self.root:
             if getattr(node, "tag", None) == tag:
-                self.current = node.parent or self.root
+                self.current = node.parent or self._body or self.root
                 return
             node = node.parent
-        self.current = self.root
+        self.current = self._body or self.root
 
     def _append_text(self, text: str):
         """Append text to current node, merging with previous text when possible."""
@@ -79,17 +86,40 @@ class _DOMBuilder(HTMLParser):
             return
         if self._skip_depth > 0:
             return
+        
+        # Skip html/head tags - we handle structure ourselves
+        if tag == "html":
+            return  # Use our root instead
+        if tag == "head":
+            self._skip_depth += 1  # Skip head content
+            return
+        if tag == "body":
+            if self._body is None:
+                # Create the body element
+                attr_dict = {k: v for k, v in attrs}
+                self._body = Element("body", attr_dict, parent=self.root)
+                self.root.children.append(self._body)
+            self.current = self._body
+            return
+            
         attr_dict = {k: v for k, v in attrs}
         el = Element(tag, attr_dict)
+        
+        # Ensure we're inside a body
+        if self.current is self.root:
+            self._ensure_body()
+        
         self._push(el)
 
     def handle_endtag(self, tag):
-        if tag in {"script", "style"}:
+        if tag in {"script", "style", "head"}:
             if self._skip_depth > 0:
                 self._skip_depth -= 1
             return
         if self._skip_depth > 0:
             return
+        if tag in {"html", "body"}:
+            return  # Don't pop these
         self._pop(tag)
 
     def handle_data(self, data):
@@ -101,7 +131,12 @@ class _DOMBuilder(HTMLParser):
             return
         text = re.sub(r"\s+", " ", text)
         if not text.strip():
-            text = " "
+            return  # Skip whitespace-only text at root level
+        
+        # Ensure we're inside a body for text content
+        if self.current is self.root:
+            self._ensure_body()
+        
         self._append_text(text)
 
     def handle_entityref(self, name):

@@ -28,6 +28,26 @@ class Chrome:
         self.skia_surface: Optional[skia.Surface] = None
         self.tab_pages: dict = {}  # Map tab objects to AdwTabPage
         self._closing_tabs: set = set()  # Track tabs being closed to prevent re-entry
+        
+        # Debug mode state
+        self.debug_mode = False
+        
+        # Scroll state
+        self.scroll_y = 0
+        self.document_height = 0  # Total document height for scroll limits
+        self.viewport_height = 0  # Current viewport height
+        
+        # Scrollbar fade state
+        self.scrollbar_opacity = 0.0
+        self.scrollbar_fade_timeout = None
+        
+        # Selection state
+        self.selection_start = None  # (x, y) of selection start
+        self.selection_end = None    # (x, y) of selection end
+        self.is_selecting = False    # True while mouse is dragging
+        
+        # Layout information for text selection
+        self.text_layout = []  # List of {text, x, y, width, height, font_size}
 
     def create_window(self):
         """Initialize the Adwaita application window."""
@@ -104,7 +124,27 @@ class Chrome:
         self.drawing_area.set_vexpand(True)
         self.drawing_area.set_hexpand(True)
         self.drawing_area.set_draw_func(self.on_draw)
+        self.drawing_area.set_can_focus(True)  # Allow focus for keyboard events
+        self.drawing_area.set_focusable(True)
         content_box.append(self.drawing_area)
+        
+        # Add scroll controller for mouse wheel
+        scroll_controller = Gtk.EventControllerScroll.new(
+            Gtk.EventControllerScrollFlags.VERTICAL
+        )
+        scroll_controller.connect("scroll", self._on_scroll)
+        self.drawing_area.add_controller(scroll_controller)
+        
+        # Add mouse button controller for selection
+        click_controller = Gtk.GestureClick.new()
+        click_controller.connect("pressed", self._on_mouse_pressed)
+        click_controller.connect("released", self._on_mouse_released)
+        self.drawing_area.add_controller(click_controller)
+        
+        # Add motion controller for drag selection
+        motion_controller = Gtk.EventControllerMotion.new()
+        motion_controller.connect("motion", self._on_mouse_motion)
+        self.drawing_area.add_controller(motion_controller)
         
         # Add content box to vbox (not to TabView - we use a single drawing area for all tabs)
         vbox.append(content_box)
@@ -265,6 +305,9 @@ class Chrome:
         # Create Skia surface for this frame
         self.skia_surface = skia.Surface(width, height)
         canvas = self.skia_surface.getCanvas()
+        
+        # Store viewport height
+        self.viewport_height = height
 
         # White background
         canvas.clear(skia.ColorWHITE)
@@ -274,6 +317,8 @@ class Chrome:
         document = frame.document if frame else None
         if document:
             self._render_dom_content(canvas, document, width, height)
+            # Draw scrollbar on top
+            self._draw_scrollbar(canvas, width, height)
         else:
             paint = skia.Paint()
             paint.setAntiAlias(True)
@@ -306,6 +351,13 @@ class Chrome:
         if not body:
             return
 
+        # Clear text layout for this render
+        self.text_layout = []
+        
+        # Apply scroll offset
+        canvas.save()
+        canvas.translate(0, -self.scroll_y)
+        
         blocks = self._collect_blocks(body)
         paint = skia.Paint()
         paint.setAntiAlias(True)
@@ -314,6 +366,9 @@ class Chrome:
         x_margin = 20
         max_width = max(10, width - 2 * x_margin)
         y = 30
+
+        # Track layout for debug mode
+        layout_rects = []
 
         for block in blocks:
             font_size = block.get("font_size", 14)
@@ -347,12 +402,53 @@ class Chrome:
             line_height = font_size * 1.4
             top_margin = block.get("margin_top", 6)
             y += top_margin
+            
+            block_start_y = y
             for line in lines:
-                if y > height - 20:
-                    return
-                canvas.drawString(line, x_margin, y, font, paint)
+                # Only render if visible (accounting for scroll)
+                visible_y = y - self.scroll_y
+                if visible_y > -50 and visible_y < height + 50:
+                    canvas.drawString(line, x_margin, y, font, paint)
+                
+                # Store text layout for selection
+                line_width = font.measureText(line)
+                self.text_layout.append({
+                    "text": line,
+                    "x": x_margin,
+                    "y": y - font_size,  # Top of line
+                    "width": line_width,
+                    "height": line_height,
+                    "font_size": font_size
+                })
+                
                 y += line_height
+            
+            block_end_y = y
             y += block.get("margin_bottom", 10)
+            
+            # Store layout for debug mode
+            if self.debug_mode:
+                block_type = block.get("block_type", "block")
+                layout_rects.append({
+                    "x": x_margin - 5,
+                    "y": block_start_y - font_size,
+                    "width": max_width + 10,
+                    "height": block_end_y - block_start_y + 5,
+                    "type": block_type
+                })
+        
+        # Store total document height
+        self.document_height = y + 50  # Add some padding at the bottom
+        
+        # Draw selection highlight based on text layout
+        if self.selection_start and self.selection_end:
+            self._draw_text_selection(canvas)
+        
+        # Draw debug overlays
+        if self.debug_mode:
+            self._draw_debug_overlays(canvas, layout_rects, document)
+        
+        canvas.restore()
 
     def _find_body(self, document):
         from ..parser.html import Element
@@ -397,22 +493,125 @@ class Chrome:
                     continue
 
                 if tag == "h1":
-                    blocks.append({"text": content, "font_size": 24, "margin_top": 12, "margin_bottom": 12})
+                    blocks.append({"text": content, "font_size": 24, "margin_top": 12, "margin_bottom": 12, "block_type": "block", "tag": "h1"})
                 elif tag == "h2":
-                    blocks.append({"text": content, "font_size": 20, "margin_top": 10, "margin_bottom": 10})
+                    blocks.append({"text": content, "font_size": 20, "margin_top": 10, "margin_bottom": 10, "block_type": "block", "tag": "h2"})
                 elif tag == "h3":
-                    blocks.append({"text": content, "font_size": 18, "margin_top": 8, "margin_bottom": 8})
+                    blocks.append({"text": content, "font_size": 18, "margin_top": 8, "margin_bottom": 8, "block_type": "block", "tag": "h3"})
                 elif tag == "p":
-                    blocks.append({"text": content, "font_size": 14, "margin_top": 6, "margin_bottom": 12})
+                    blocks.append({"text": content, "font_size": 14, "margin_top": 6, "margin_bottom": 12, "block_type": "block", "tag": "p"})
                 elif tag == "li":
-                    blocks.append({"text": content, "font_size": 14, "bullet": True, "margin_top": 4, "margin_bottom": 4})
+                    blocks.append({"text": content, "font_size": 14, "bullet": True, "margin_top": 4, "margin_bottom": 4, "block_type": "list-item", "tag": "li"})
                 elif tag in {"ul", "ol"}:
                     blocks.extend(self._collect_blocks(child))
+                elif tag in {"span", "a", "strong", "em", "b", "i", "code"}:
+                    # Inline elements
+                    blocks.append({"text": content, "font_size": 14, "block_type": "inline", "tag": tag})
                 else:
                     # Generic element: render text
-                    blocks.append({"text": content, "font_size": 14})
+                    blocks.append({"text": content, "font_size": 14, "block_type": "block", "tag": tag})
 
         return blocks
+    
+    def _draw_selection_highlight(self, canvas, width: int):
+        """Draw selection highlight rectangle."""
+        if not self.selection_start or not self.selection_end:
+            return
+        
+        x1, y1 = self.selection_start
+        x2, y2 = self.selection_end
+        
+        # Normalize coordinates
+        left = min(x1, x2)
+        right = max(x1, x2)
+        top = min(y1, y2)
+        bottom = max(y1, y2)
+        
+        paint = skia.Paint()
+        paint.setColor(skia.Color(100, 149, 237, 80))  # Cornflower blue, semi-transparent
+        paint.setStyle(skia.Paint.kFill_Style)
+        
+        rect = skia.Rect.MakeLTRB(left, top, right, bottom)
+        canvas.drawRect(rect, paint)
+    
+    def _draw_debug_overlays(self, canvas, layout_rects: list, document):
+        """Draw debug overlays showing element boxes."""
+        from ..parser.html import Element, Text
+        
+        # Color scheme for different element types
+        colors = {
+            "block": skia.Color(255, 0, 0, 60),      # Red - block elements
+            "inline": skia.Color(0, 0, 255, 60),     # Blue - inline elements
+            "list-item": skia.Color(0, 255, 0, 60), # Green - list items
+            "text": skia.Color(255, 255, 0, 60),    # Yellow - text nodes
+        }
+        
+        border_colors = {
+            "block": skia.Color(255, 0, 0, 180),
+            "inline": skia.Color(0, 0, 255, 180),
+            "list-item": skia.Color(0, 255, 0, 180),
+            "text": skia.Color(255, 255, 0, 180),
+        }
+        
+        for rect_info in layout_rects:
+            block_type = rect_info.get("type", "block")
+            
+            # Fill
+            fill_paint = skia.Paint()
+            fill_paint.setColor(colors.get(block_type, colors["block"]))
+            fill_paint.setStyle(skia.Paint.kFill_Style)
+            
+            rect = skia.Rect.MakeLTRB(
+                rect_info["x"],
+                rect_info["y"],
+                rect_info["x"] + rect_info["width"],
+                rect_info["y"] + rect_info["height"]
+            )
+            canvas.drawRect(rect, fill_paint)
+            
+            # Border
+            border_paint = skia.Paint()
+            border_paint.setColor(border_colors.get(block_type, border_colors["block"]))
+            border_paint.setStyle(skia.Paint.kStroke_Style)
+            border_paint.setStrokeWidth(1)
+            canvas.drawRect(rect, border_paint)
+        
+        # Draw legend in top-right corner
+        self._draw_debug_legend(canvas)
+    
+    def _draw_debug_legend(self, canvas):
+        """Draw debug mode legend."""
+        # Position in screen coordinates (add scroll offset back)
+        legend_x = 10
+        legend_y = self.scroll_y + 10
+        
+        font = skia.Font(skia.Typeface.MakeDefault(), 11)
+        
+        # Background
+        bg_paint = skia.Paint()
+        bg_paint.setColor(skia.Color(0, 0, 0, 200))
+        bg_paint.setStyle(skia.Paint.kFill_Style)
+        canvas.drawRect(skia.Rect.MakeLTRB(legend_x, legend_y, legend_x + 150, legend_y + 85), bg_paint)
+        
+        text_paint = skia.Paint()
+        text_paint.setColor(skia.ColorWHITE)
+        text_paint.setAntiAlias(True)
+        
+        canvas.drawString("DEBUG MODE (Ctrl+Shift+O)", legend_x + 5, legend_y + 15, font, text_paint)
+        
+        items = [
+            ("Red", "Block elements", skia.Color(255, 100, 100, 255)),
+            ("Blue", "Inline elements", skia.Color(100, 100, 255, 255)),
+            ("Green", "List items", skia.Color(100, 255, 100, 255)),
+        ]
+        
+        y_offset = 30
+        for label, desc, color in items:
+            color_paint = skia.Paint()
+            color_paint.setColor(color)
+            canvas.drawRect(skia.Rect.MakeLTRB(legend_x + 5, legend_y + y_offset, legend_x + 15, legend_y + y_offset + 10), color_paint)
+            canvas.drawString(f"{label}: {desc}", legend_x + 20, legend_y + y_offset + 10, font, text_paint)
+            y_offset += 18
 
     def paint(self):
         """Trigger redraw of the drawing area."""
@@ -437,11 +636,234 @@ class Chrome:
         
         key_name = Gdk.keyval_name(keyval)
         
+        # Ctrl+Shift+D: DOM graph visualization
         if ctrl_pressed and shift_pressed and key_name in ('D', 'd'):
             self._show_dom_graph()
-            return True  # Event handled
+            return True
+        
+        # Ctrl+Shift+O: Toggle debug mode (DOM outline visualization)
+        if ctrl_pressed and shift_pressed and key_name in ('O', 'o'):
+            self._toggle_debug_mode()
+            return True
+        
+        # Page scrolling with arrow keys, Page Up/Down, Home/End
+        scroll_amount = 50
+        if key_name == 'Down':
+            self._scroll_by(scroll_amount)
+            return True
+        elif key_name == 'Up':
+            self._scroll_by(-scroll_amount)
+            return True
+        elif key_name == 'Page_Down':
+            self._scroll_by(400)
+            return True
+        elif key_name == 'Page_Up':
+            self._scroll_by(-400)
+            return True
+        elif key_name == 'Home' and ctrl_pressed:
+            self.scroll_y = 0
+            self.paint()
+            return True
+        elif key_name == 'End' and ctrl_pressed:
+            self.scroll_y = 10000  # Will be clamped
+            self.paint()
+            return True
+        elif key_name == 'space':
+            # Space scrolls down, Shift+Space scrolls up
+            if shift_pressed:
+                self._scroll_by(-400)
+            else:
+                self._scroll_by(400)
+            return True
         
         return False  # Event not handled
+    
+    def _toggle_debug_mode(self):
+        """Toggle debug mode for DOM visualization."""
+        self.debug_mode = not self.debug_mode
+        mode_str = "ON" if self.debug_mode else "OFF"
+        self.logger.info(f"Debug mode: {mode_str}")
+        self.paint()
+    
+    def _scroll_by(self, delta: int):
+        """Scroll the page by the given amount, clamped to document bounds."""
+        max_scroll = max(0, self.document_height - self.viewport_height)
+        self.scroll_y = max(0, min(max_scroll, self.scroll_y + delta))
+        self._show_scrollbar()
+        self.paint()
+    
+    def _show_scrollbar(self):
+        """Show scrollbar and schedule fade out."""
+        from gi.repository import GLib
+        
+        self.scrollbar_opacity = 1.0
+        
+        # Cancel any existing fade timeout
+        if self.scrollbar_fade_timeout:
+            GLib.source_remove(self.scrollbar_fade_timeout)
+        
+        # Schedule fade out after 1 second
+        self.scrollbar_fade_timeout = GLib.timeout_add(1000, self._fade_scrollbar)
+    
+    def _fade_scrollbar(self):
+        """Gradually fade out the scrollbar."""
+        from gi.repository import GLib
+        
+        self.scrollbar_opacity -= 0.1
+        if self.scrollbar_opacity <= 0:
+            self.scrollbar_opacity = 0
+            self.scrollbar_fade_timeout = None
+            self.paint()
+            return False  # Stop the timeout
+        
+        self.paint()
+        # Continue fading
+        self.scrollbar_fade_timeout = GLib.timeout_add(50, self._fade_scrollbar)
+        return False  # This instance is done
+    
+    def _draw_scrollbar(self, canvas, width: int, height: int):
+        """Draw the scrollbar overlay."""
+        if self.scrollbar_opacity <= 0 or self.document_height <= height:
+            return
+        
+        # Calculate scrollbar dimensions
+        scrollbar_width = 8
+        scrollbar_margin = 4
+        scrollbar_x = width - scrollbar_width - scrollbar_margin
+        
+        # Track height (full viewport)
+        track_height = height - 2 * scrollbar_margin
+        
+        # Thumb size proportional to viewport/document ratio
+        thumb_ratio = height / self.document_height
+        thumb_height = max(30, track_height * thumb_ratio)
+        
+        # Thumb position based on scroll position
+        max_scroll = max(1, self.document_height - height)
+        scroll_ratio = self.scroll_y / max_scroll
+        thumb_y = scrollbar_margin + scroll_ratio * (track_height - thumb_height)
+        
+        # Draw track (subtle)
+        alpha = int(30 * self.scrollbar_opacity)
+        track_paint = skia.Paint()
+        track_paint.setColor(skia.Color(0, 0, 0, alpha))
+        track_paint.setStyle(skia.Paint.kFill_Style)
+        track_rect = skia.RRect.MakeRectXY(
+            skia.Rect.MakeLTRB(scrollbar_x, scrollbar_margin, 
+                              scrollbar_x + scrollbar_width, height - scrollbar_margin),
+            scrollbar_width / 2, scrollbar_width / 2
+        )
+        canvas.drawRRect(track_rect, track_paint)
+        
+        # Draw thumb
+        alpha = int(150 * self.scrollbar_opacity)
+        thumb_paint = skia.Paint()
+        thumb_paint.setColor(skia.Color(100, 100, 100, alpha))
+        thumb_paint.setStyle(skia.Paint.kFill_Style)
+        thumb_rect = skia.RRect.MakeRectXY(
+            skia.Rect.MakeLTRB(scrollbar_x, thumb_y,
+                              scrollbar_x + scrollbar_width, thumb_y + thumb_height),
+            scrollbar_width / 2, scrollbar_width / 2
+        )
+        canvas.drawRRect(thumb_rect, thumb_paint)
+    
+    def _on_scroll(self, controller, dx, dy):
+        """Handle mouse wheel scroll."""
+        scroll_amount = int(dy * 50)  # Scale scroll amount
+        self._scroll_by(scroll_amount)
+        return True
+    
+    def _on_mouse_pressed(self, gesture, n_press, x, y):
+        """Handle mouse button press for text selection."""
+        self.selection_start = (x, y + self.scroll_y)
+        self.selection_end = None
+        self.is_selecting = True
+        self.drawing_area.grab_focus()
+    
+    def _on_mouse_released(self, gesture, n_press, x, y):
+        """Handle mouse button release for text selection."""
+        if self.is_selecting:
+            self.selection_end = (x, y + self.scroll_y)
+            self.is_selecting = False
+            # Extract selected text
+            selected_text = self._get_selected_text()
+            if selected_text:
+                self.logger.info(f"Selected text: {selected_text[:100]}...")
+                # Copy to clipboard
+                self._copy_to_clipboard(selected_text)
+            self.paint()
+    
+    def _on_mouse_motion(self, controller, x, y):
+        """Handle mouse motion for drag selection."""
+        if self.is_selecting:
+            self.selection_end = (x, y + self.scroll_y)
+            self.paint()
+    
+    def _draw_text_selection(self, canvas):
+        """Draw selection highlight for selected text lines."""
+        if not self.selection_start or not self.selection_end:
+            return
+        
+        # Normalize selection coordinates
+        y1 = min(self.selection_start[1], self.selection_end[1])
+        y2 = max(self.selection_start[1], self.selection_end[1])
+        x1 = self.selection_start[0] if self.selection_start[1] <= self.selection_end[1] else self.selection_end[0]
+        x2 = self.selection_end[0] if self.selection_start[1] <= self.selection_end[1] else self.selection_start[0]
+        
+        paint = skia.Paint()
+        paint.setColor(skia.Color(100, 149, 237, 100))  # Cornflower blue
+        paint.setStyle(skia.Paint.kFill_Style)
+        
+        for line_info in self.text_layout:
+            line_top = line_info["y"]
+            line_bottom = line_info["y"] + line_info["height"]
+            line_left = line_info["x"]
+            line_right = line_info["x"] + line_info["width"]
+            
+            # Check if this line is in the selection range
+            if line_bottom < y1 or line_top > y2:
+                continue
+            
+            # Calculate highlight bounds for this line
+            hl_left = line_left
+            hl_right = line_right
+            
+            # First line: start from selection start x
+            if line_top <= y1 < line_bottom:
+                hl_left = max(line_left, x1)
+            
+            # Last line: end at selection end x
+            if line_top < y2 <= line_bottom:
+                hl_right = min(line_right, x2)
+            
+            # Draw highlight
+            rect = skia.Rect.MakeLTRB(hl_left, line_top, hl_right, line_bottom)
+            canvas.drawRect(rect, paint)
+    
+    def _get_selected_text(self) -> str:
+        """Extract text from the current selection."""
+        if not self.selection_start or not self.selection_end or not self.text_layout:
+            return ""
+        
+        # Normalize selection coordinates
+        y1 = min(self.selection_start[1], self.selection_end[1])
+        y2 = max(self.selection_start[1], self.selection_end[1])
+        
+        selected_lines = []
+        for line_info in self.text_layout:
+            line_top = line_info["y"]
+            line_bottom = line_info["y"] + line_info["height"]
+            
+            # Check if this line is in the selection range
+            if line_bottom >= y1 and line_top <= y2:
+                selected_lines.append(line_info["text"])
+        
+        return "\n".join(selected_lines)
+    
+    def _copy_to_clipboard(self, text: str):
+        """Copy text to system clipboard."""
+        clipboard = Gdk.Display.get_default().get_clipboard()
+        clipboard.set(text)
     
     def _show_dom_graph(self):
         """Generate and display DOM graph for current tab."""

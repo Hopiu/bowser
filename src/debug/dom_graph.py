@@ -139,14 +139,11 @@ def render_dom_graph_to_svg(document: Optional[Element], output_path: str) -> bo
             return True
         else:
             logger.warning(f"Graphviz rendering failed: {result.stderr.decode()}")
-            # Fallback: save as .dot file
-            dot_path = output_path.replace('.svg', '.dot')
-            return save_dom_graph(document, dot_path)
+            return False
             
     except FileNotFoundError:
-        logger.warning("Graphviz 'dot' command not found. Saving as .dot file instead.")
-        dot_path = output_path.replace('.svg', '.dot')
-        return save_dom_graph(document, dot_path)
+        logger.warning("Graphviz 'dot' command not found. Install graphviz for SVG output.")
+        return False
     except Exception as e:
         logger.error(f"Failed to render DOM graph: {e}")
         return False
