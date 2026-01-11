@@ -32,6 +32,10 @@ class Chrome:
         # Debug mode state
         self.debug_mode = False
         
+        # FPS tracking for debug mode
+        self.frame_times = []  # List of recent frame timestamps
+        self.fps = 0.0
+        
         # Scroll state
         self.scroll_y = 0
         self.document_height = 0  # Total document height for scroll limits
@@ -47,7 +51,9 @@ class Chrome:
         self.is_selecting = False    # True while mouse is dragging
         
         # Layout information for text selection
-        self.text_layout = []  # List of {text, x, y, width, height, font_size}
+        # Each entry: {text, x, y, width, height, font_size, font, char_positions}
+        # char_positions is a list of x offsets for each character
+        self.text_layout = []
 
     def create_window(self):
         """Initialize the Adwaita application window."""
@@ -301,6 +307,16 @@ class Chrome:
 
     def on_draw(self, drawing_area, context, width, height):
         """Callback for drawing the content area using Skia."""
+        import time
+        
+        # Track frame time for FPS calculation
+        current_time = time.time()
+        self.frame_times.append(current_time)
+        # Keep only last 60 frame times (about 1 second at 60fps)
+        self.frame_times = [t for t in self.frame_times if current_time - t < 1.0]
+        if len(self.frame_times) > 1:
+            self.fps = len(self.frame_times)
+        
         self.logger.debug(f"on_draw start {width}x{height}")
         # Create Skia surface for this frame
         self.skia_surface = skia.Surface(width, height)
@@ -317,8 +333,11 @@ class Chrome:
         document = frame.document if frame else None
         if document:
             self._render_dom_content(canvas, document, width, height)
-            # Draw scrollbar on top
+            # Draw scrollbar on top (in screen coordinates, not scrolled)
             self._draw_scrollbar(canvas, width, height)
+            # Draw FPS counter in debug mode
+            if self.debug_mode:
+                self._draw_fps_counter(canvas, width)
         else:
             paint = skia.Paint()
             paint.setAntiAlias(True)
@@ -410,6 +429,11 @@ class Chrome:
                 if visible_y > -50 and visible_y < height + 50:
                     canvas.drawString(line, x_margin, y, font, paint)
                 
+                # Calculate character positions for precise selection
+                char_positions = [0.0]  # Start at 0
+                for i in range(1, len(line) + 1):
+                    char_positions.append(font.measureText(line[:i]))
+                
                 # Store text layout for selection
                 line_width = font.measureText(line)
                 self.text_layout.append({
@@ -418,7 +442,8 @@ class Chrome:
                     "y": y - font_size,  # Top of line
                     "width": line_width,
                     "height": line_height,
-                    "font_size": font_size
+                    "font_size": font_size,
+                    "char_positions": char_positions
                 })
                 
                 y += line_height
@@ -612,6 +637,34 @@ class Chrome:
             canvas.drawRect(skia.Rect.MakeLTRB(legend_x + 5, legend_y + y_offset, legend_x + 15, legend_y + y_offset + 10), color_paint)
             canvas.drawString(f"{label}: {desc}", legend_x + 20, legend_y + y_offset + 10, font, text_paint)
             y_offset += 18
+    
+    def _draw_fps_counter(self, canvas, width: int):
+        """Draw FPS counter in top-right corner."""
+        # Position in top-right
+        fps_x = width - 80
+        fps_y = 10
+        
+        font = skia.Font(skia.Typeface.MakeDefault(), 14)
+        
+        # Background
+        bg_paint = skia.Paint()
+        bg_paint.setColor(skia.Color(0, 0, 0, 180))
+        bg_paint.setStyle(skia.Paint.kFill_Style)
+        canvas.drawRect(skia.Rect.MakeLTRB(fps_x - 5, fps_y, fps_x + 75, fps_y + 25), bg_paint)
+        
+        # FPS text with color based on performance
+        text_paint = skia.Paint()
+        text_paint.setAntiAlias(True)
+        
+        if self.fps >= 50:
+            text_paint.setColor(skia.Color(100, 255, 100, 255))  # Green
+        elif self.fps >= 30:
+            text_paint.setColor(skia.Color(255, 255, 100, 255))  # Yellow
+        else:
+            text_paint.setColor(skia.Color(255, 100, 100, 255))  # Red
+        
+        fps_text = f"FPS: {self.fps:.0f}"
+        canvas.drawString(fps_text, fps_x, fps_y + 17, font, text_paint)
 
     def paint(self):
         """Trigger redraw of the drawing area."""
@@ -800,15 +853,19 @@ class Chrome:
             self.paint()
     
     def _draw_text_selection(self, canvas):
-        """Draw selection highlight for selected text lines."""
+        """Draw selection highlight for selected text at character level."""
         if not self.selection_start or not self.selection_end:
             return
         
-        # Normalize selection coordinates
-        y1 = min(self.selection_start[1], self.selection_end[1])
-        y2 = max(self.selection_start[1], self.selection_end[1])
-        x1 = self.selection_start[0] if self.selection_start[1] <= self.selection_end[1] else self.selection_end[0]
-        x2 = self.selection_end[0] if self.selection_start[1] <= self.selection_end[1] else self.selection_start[0]
+        # Normalize selection: start should be before end in reading order
+        if (self.selection_start[1] > self.selection_end[1] or
+            (self.selection_start[1] == self.selection_end[1] and 
+             self.selection_start[0] > self.selection_end[0])):
+            sel_start = self.selection_end
+            sel_end = self.selection_start
+        else:
+            sel_start = self.selection_start
+            sel_end = self.selection_end
         
         paint = skia.Paint()
         paint.setColor(skia.Color(100, 149, 237, 100))  # Cornflower blue
@@ -818,47 +875,94 @@ class Chrome:
             line_top = line_info["y"]
             line_bottom = line_info["y"] + line_info["height"]
             line_left = line_info["x"]
-            line_right = line_info["x"] + line_info["width"]
+            char_positions = line_info.get("char_positions", [])
+            text = line_info["text"]
             
-            # Check if this line is in the selection range
-            if line_bottom < y1 or line_top > y2:
+            # Skip lines completely outside selection
+            if line_bottom < sel_start[1] or line_top > sel_end[1]:
                 continue
             
-            # Calculate highlight bounds for this line
+            # Determine selection bounds for this line
             hl_left = line_left
-            hl_right = line_right
+            hl_right = line_left + line_info["width"]
             
-            # First line: start from selection start x
-            if line_top <= y1 < line_bottom:
-                hl_left = max(line_left, x1)
+            # If this line contains the start of selection
+            if line_top <= sel_start[1] < line_bottom:
+                # Find character index at sel_start x
+                start_char_idx = self._x_to_char_index(sel_start[0], line_left, char_positions)
+                hl_left = line_left + char_positions[start_char_idx] if start_char_idx < len(char_positions) else line_left
             
-            # Last line: end at selection end x
-            if line_top < y2 <= line_bottom:
-                hl_right = min(line_right, x2)
+            # If this line contains the end of selection
+            if line_top <= sel_end[1] < line_bottom:
+                # Find character index at sel_end x
+                end_char_idx = self._x_to_char_index(sel_end[0], line_left, char_positions)
+                hl_right = line_left + char_positions[end_char_idx] if end_char_idx < len(char_positions) else hl_right
             
             # Draw highlight
-            rect = skia.Rect.MakeLTRB(hl_left, line_top, hl_right, line_bottom)
-            canvas.drawRect(rect, paint)
+            if hl_right > hl_left:
+                rect = skia.Rect.MakeLTRB(hl_left, line_top, hl_right, line_bottom)
+                canvas.drawRect(rect, paint)
+    
+    def _x_to_char_index(self, x: float, line_x: float, char_positions: list) -> int:
+        """Convert x coordinate to character index within a line."""
+        rel_x = x - line_x
+        if rel_x <= 0:
+            return 0
+        
+        # Binary search for the character position
+        for i, pos in enumerate(char_positions):
+            if pos >= rel_x:
+                # Check if closer to this char or previous
+                if i > 0 and (pos - rel_x) > (rel_x - char_positions[i-1]):
+                    return i - 1
+                return i
+        
+        return len(char_positions) - 1
     
     def _get_selected_text(self) -> str:
-        """Extract text from the current selection."""
+        """Extract text from the current selection at character level."""
         if not self.selection_start or not self.selection_end or not self.text_layout:
             return ""
         
-        # Normalize selection coordinates
-        y1 = min(self.selection_start[1], self.selection_end[1])
-        y2 = max(self.selection_start[1], self.selection_end[1])
+        # Normalize selection: start should be before end in reading order
+        if (self.selection_start[1] > self.selection_end[1] or
+            (self.selection_start[1] == self.selection_end[1] and 
+             self.selection_start[0] > self.selection_end[0])):
+            sel_start = self.selection_end
+            sel_end = self.selection_start
+        else:
+            sel_start = self.selection_start
+            sel_end = self.selection_end
         
-        selected_lines = []
+        selected_parts = []
+        
         for line_info in self.text_layout:
             line_top = line_info["y"]
             line_bottom = line_info["y"] + line_info["height"]
+            line_left = line_info["x"]
+            char_positions = line_info.get("char_positions", [])
+            text = line_info["text"]
             
-            # Check if this line is in the selection range
-            if line_bottom >= y1 and line_top <= y2:
-                selected_lines.append(line_info["text"])
+            # Skip lines completely outside selection
+            if line_bottom < sel_start[1] or line_top > sel_end[1]:
+                continue
+            
+            start_idx = 0
+            end_idx = len(text)
+            
+            # If this line contains the start of selection
+            if line_top <= sel_start[1] < line_bottom:
+                start_idx = self._x_to_char_index(sel_start[0], line_left, char_positions)
+            
+            # If this line contains the end of selection
+            if line_top <= sel_end[1] < line_bottom:
+                end_idx = self._x_to_char_index(sel_end[0], line_left, char_positions)
+            
+            # Extract the selected portion
+            if end_idx > start_idx:
+                selected_parts.append(text[start_idx:end_idx])
         
-        return "\n".join(selected_lines)
+        return " ".join(selected_parts)
     
     def _copy_to_clipboard(self, text: str):
         """Copy text to system clipboard."""
