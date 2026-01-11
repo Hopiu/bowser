@@ -13,9 +13,9 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gdk, Adw
 import skia
 
-# Import the render and layout packages
+# Import the render pipeline
+from ..render.pipeline import RenderPipeline
 from ..render.fonts import get_font
-from ..layout.document import DocumentLayout
 
 
 class Chrome:
@@ -34,6 +34,9 @@ class Chrome:
         self.skia_surface: Optional[skia.Surface] = None
         self.tab_pages: dict = {}  # Map tab objects to AdwTabPage
         self._closing_tabs: set = set()  # Track tabs being closed to prevent re-entry
+        
+        # Render pipeline - handles layout and painting
+        self.render_pipeline = RenderPipeline()
         
         # Debug mode state
         self.debug_mode = False
@@ -60,18 +63,8 @@ class Chrome:
         self.selection_end = None    # (x, y) of selection end
         self.is_selecting = False    # True while mouse is dragging
         
-        # Layout information for text selection
-        # Each entry: {text, x, y, width, height, font_size, char_positions}
-        # char_positions is a list of x offsets for each character
+        # Layout information for text selection (populated from render pipeline)
         self.text_layout = []
-        
-        # Layout cache to avoid recalculation on scroll
-        self._layout_cache_width = 0
-        self._layout_cache_doc_id = None
-        self._layout_rects = []   # Cached debug rects
-        
-        # Paint cache
-        self._text_paint = None
         
         # Sub-timings for detailed profiling
         self._render_sub_timings = {}
@@ -373,7 +366,7 @@ class Chrome:
             paint = skia.Paint()
             paint.setAntiAlias(True)
             paint.setColor(skia.ColorBLACK)
-            font = self._get_font(20)
+            font = get_font(20)
             canvas.drawString("Bowser — Enter a URL to browse", 20, 50, font, paint)
 
         # Get raw pixel data from Skia surface
@@ -410,118 +403,38 @@ class Chrome:
             self._last_profile_total = total_time
     
     def _render_dom_content(self, canvas, document, width: int, height: int):
-        """Render a basic DOM tree with headings, paragraphs, and lists."""
+        """Render the DOM content using the render pipeline."""
 
         sub_timings = {}
         
-        # Check if we need to rebuild layout cache
+        # Sync debug mode with render pipeline
+        self.render_pipeline.debug_mode = self.debug_mode
+        
+        # Use render pipeline for layout and rendering
         t0 = time.perf_counter()
-        doc_id = id(document)
-        needs_rebuild = (
-            self._layout_cache_doc_id != doc_id or
-            self._layout_cache_width != width or
-            not self.text_layout
-        )
+        self.render_pipeline.render(canvas, document, width, height, self.scroll_y)
+        sub_timings['render'] = time.perf_counter() - t0
         
-        if needs_rebuild:
-            self._rebuild_layout(document, width)
-            self._layout_cache_doc_id = doc_id
-            self._layout_cache_width = width
-            self.logger.debug(f"Layout rebuilt: {len(self.text_layout)} lines")
-        sub_timings['layout_check'] = time.perf_counter() - t0
-        
-        if not self.text_layout:
-            return
-        
-        # Apply scroll offset
+        # Get text layout for selection
         t0 = time.perf_counter()
-        canvas.save()
-        canvas.translate(0, -self.scroll_y)
-        sub_timings['transform'] = time.perf_counter() - t0
+        self.text_layout = self.render_pipeline.get_text_layout()
+        self.document_height = self.render_pipeline.get_document_height()
+        sub_timings['get_layout'] = time.perf_counter() - t0
         
-        # Get or create cached paint
-        if self._text_paint is None:
-            self._text_paint = skia.Paint()
-            self._text_paint.setAntiAlias(True)
-            self._text_paint.setColor(skia.ColorBLACK)
-        
-        # Only draw visible lines
-        t0 = time.perf_counter()
-        visible_top = self.scroll_y - 50
-        visible_bottom = self.scroll_y + height + 50
-        
-        visible_count = 0
-        for line_info in self.text_layout:
-            line_y = line_info["y"] + line_info["font_size"]  # Baseline y
-            if line_y < visible_top or line_y - line_info["height"] > visible_bottom:
-                continue
-            
-            visible_count += 1
-            font = self._get_font(line_info["font_size"])
-            canvas.drawString(line_info["text"], line_info["x"], line_y, font, self._text_paint)
-        sub_timings['draw_text'] = time.perf_counter() - t0
-        
-        # Draw selection highlight
+        # Draw selection highlight (still in chrome as it's UI interaction)
         t0 = time.perf_counter()
         if self.selection_start and self.selection_end:
+            canvas.save()
+            canvas.translate(0, -self.scroll_y)
             self._draw_text_selection(canvas)
+            canvas.restore()
         sub_timings['selection'] = time.perf_counter() - t0
-        
-        # Draw debug overlays
-        t0 = time.perf_counter()
-        if self.debug_mode:
-            self._draw_debug_overlays(canvas, self._layout_rects, document)
-        sub_timings['debug_overlay'] = time.perf_counter() - t0
-        
-        t0 = time.perf_counter()
-        canvas.restore()
-        sub_timings['restore'] = time.perf_counter() - t0
         
         # Store sub-timings for display
         if self.debug_mode:
             self._render_sub_timings = sub_timings
-            self._visible_line_count = visible_count
-    
-    def _get_font(self, size: int):
-        """Get a cached font for the given size."""
-        return get_font(size)
-    
-    def _rebuild_layout(self, body, width: int):
-        """Rebuild the layout cache for text positioning using DocumentLayout."""
-        self.text_layout = []
-        self._layout_rects = []
-        
-        # Use the new DocumentLayout for layout calculation
-        doc_layout = DocumentLayout(body)
-        layout_lines = doc_layout.layout(width)
-        
-        # Convert LayoutLine objects to text_layout format
-        x_margin = 20
-        max_width = max(10, width - 2 * x_margin)
-        
-        for line in layout_lines:
-            self.text_layout.append({
-                "text": line.text,
-                "x": line.x,
-                "y": line.y,  # Top of line
-                "width": line.width,
-                "height": line.height,
-                "font_size": line.font_size,
-                "char_positions": line.char_positions
-            })
-        
-        # Build layout rects for debug mode from blocks
-        for block in doc_layout.blocks:
-            self._layout_rects.append({
-                "x": block.x - 5,
-                "y": block.y - block.lines[0].font_size if block.lines else block.y,
-                "width": block.width + 10,
-                "height": block.height + 5,
-                "type": block.block_type
-            })
-        
-        # Store total document height
-        self.document_height = doc_layout.height
+            self._visible_line_count = len([l for l in self.text_layout 
+                if self.scroll_y - 50 <= l["y"] + l["font_size"] <= self.scroll_y + height + 50])
 
     def _draw_selection_highlight(self, canvas, width: int):
         """Draw selection highlight rectangle."""
@@ -544,87 +457,10 @@ class Chrome:
         rect = skia.Rect.MakeLTRB(left, top, right, bottom)
         canvas.drawRect(rect, paint)
     
-    def _draw_debug_overlays(self, canvas, layout_rects: list, document):
-        """Draw debug overlays showing element boxes."""
-        # Color scheme for different element types
-        colors = {
-            "block": skia.Color(255, 0, 0, 60),      # Red - block elements
-            "inline": skia.Color(0, 0, 255, 60),     # Blue - inline elements
-            "list-item": skia.Color(0, 255, 0, 60), # Green - list items
-            "text": skia.Color(255, 255, 0, 60),    # Yellow - text nodes
-        }
-        
-        border_colors = {
-            "block": skia.Color(255, 0, 0, 180),
-            "inline": skia.Color(0, 0, 255, 180),
-            "list-item": skia.Color(0, 255, 0, 180),
-            "text": skia.Color(255, 255, 0, 180),
-        }
-        
-        for rect_info in layout_rects:
-            block_type = rect_info.get("type", "block")
-            
-            # Fill
-            fill_paint = skia.Paint()
-            fill_paint.setColor(colors.get(block_type, colors["block"]))
-            fill_paint.setStyle(skia.Paint.kFill_Style)
-            
-            rect = skia.Rect.MakeLTRB(
-                rect_info["x"],
-                rect_info["y"],
-                rect_info["x"] + rect_info["width"],
-                rect_info["y"] + rect_info["height"]
-            )
-            canvas.drawRect(rect, fill_paint)
-            
-            # Border
-            border_paint = skia.Paint()
-            border_paint.setColor(border_colors.get(block_type, border_colors["block"]))
-            border_paint.setStyle(skia.Paint.kStroke_Style)
-            border_paint.setStrokeWidth(1)
-            canvas.drawRect(rect, border_paint)
-        
-        # Draw legend in top-right corner
-        self._draw_debug_legend(canvas)
-    
-    def _draw_debug_legend(self, canvas):
-        """Draw debug mode legend."""
-        # Position in screen coordinates (add scroll offset back)
-        legend_x = 10
-        legend_y = self.scroll_y + 10
-        
-        font = self._get_font(11)
-        
-        # Background
-        bg_paint = skia.Paint()
-        bg_paint.setColor(skia.Color(0, 0, 0, 200))
-        bg_paint.setStyle(skia.Paint.kFill_Style)
-        canvas.drawRect(skia.Rect.MakeLTRB(legend_x, legend_y, legend_x + 150, legend_y + 85), bg_paint)
-        
-        text_paint = skia.Paint()
-        text_paint.setColor(skia.ColorWHITE)
-        text_paint.setAntiAlias(True)
-        
-        canvas.drawString("DEBUG MODE (Ctrl+Shift+O)", legend_x + 5, legend_y + 15, font, text_paint)
-        
-        items = [
-            ("Red", "Block elements", skia.Color(255, 100, 100, 255)),
-            ("Blue", "Inline elements", skia.Color(100, 100, 255, 255)),
-            ("Green", "List items", skia.Color(100, 255, 100, 255)),
-        ]
-        
-        y_offset = 30
-        for label, desc, color in items:
-            color_paint = skia.Paint()
-            color_paint.setColor(color)
-            canvas.drawRect(skia.Rect.MakeLTRB(legend_x + 5, legend_y + y_offset, legend_x + 15, legend_y + y_offset + 10), color_paint)
-            canvas.drawString(f"{label}: {desc}", legend_x + 20, legend_y + y_offset + 10, font, text_paint)
-            y_offset += 18
-    
     def _draw_fps_counter(self, canvas, width: int):
         """Draw FPS counter and profiling info in top-right corner."""
-        font = self._get_font(11)
-        small_font = self._get_font(9)
+        font = get_font(11)
+        small_font = get_font(9)
         
         # Calculate panel size based on profile data
         panel_width = 200

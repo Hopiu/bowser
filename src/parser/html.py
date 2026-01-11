@@ -9,6 +9,8 @@ class Text:
     def __init__(self, text, parent=None):
         self.text = text
         self.parent = parent
+        # Layout reference (set by layout engine)
+        self.layout = None
 
     def __repr__(self):  # pragma: no cover - debug helper
         return f"Text({self.text!r})"
@@ -20,9 +22,20 @@ class Element:
         self.attributes = attributes or {}
         self.children = []
         self.parent = parent
+        # Layout reference (set by layout engine)
+        self.layout = None
 
     def __repr__(self):  # pragma: no cover - debug helper
         return f"Element({self.tag!r}, {self.attributes!r})"
+    
+    @property
+    def bounding_box(self):
+        """Get bounding box from layout if available."""
+        if self.layout:
+            return (self.layout.x, self.layout.y, 
+                    self.layout.x + self.layout.width,
+                    self.layout.y + self.layout.height)
+        return None
 
 
 def print_tree(node, indent=0):
