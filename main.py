@@ -32,6 +32,11 @@ def main():
     _configure_logging(args)
 
     browser = Browser()
+    
+    # Enable debug mode in chrome if --debug flag is set
+    if args.debug:
+        browser.chrome.debug_mode = True
+    
     # If no URL provided, use startpage
     url = args.url if args.url else "about:startpage"
     browser.new_tab(url)

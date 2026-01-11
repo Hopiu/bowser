@@ -4,6 +4,7 @@ import gi
 from typing import Optional
 import logging
 import cairo
+import time
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -68,6 +69,13 @@ class Chrome:
         # Font cache to avoid recreating fonts every frame
         self._font_cache = {}  # {font_size: skia.Font}
         self._default_typeface = None
+        
+        # Paint cache
+        self._text_paint = None
+        
+        # Sub-timings for detailed profiling
+        self._render_sub_timings = {}
+        self._visible_line_count = 0
 
     def create_window(self):
         """Initialize the Adwaita application window."""
@@ -405,13 +413,17 @@ class Chrome:
     
     def _render_dom_content(self, canvas, document, width: int, height: int):
         """Render a basic DOM tree with headings, paragraphs, and lists."""
-        from ..parser.html import Element, Text
 
+        sub_timings = {}
+        
+        t0 = time.perf_counter()
         body = self._find_body(document)
         if not body:
             return
+        sub_timings['find_body'] = time.perf_counter() - t0
 
         # Check if we need to rebuild layout cache
+        t0 = time.perf_counter()
         doc_id = id(document)
         needs_rebuild = (
             self._layout_cache_doc_id != doc_id or
@@ -424,16 +436,22 @@ class Chrome:
             self._layout_cache_doc_id = doc_id
             self._layout_cache_width = width
             self.logger.debug(f"Layout rebuilt: {len(self.text_layout)} lines")
+        sub_timings['layout_check'] = time.perf_counter() - t0
         
         # Apply scroll offset
+        t0 = time.perf_counter()
         canvas.save()
         canvas.translate(0, -self.scroll_y)
+        sub_timings['transform'] = time.perf_counter() - t0
         
-        paint = skia.Paint()
-        paint.setAntiAlias(True)
-        paint.setColor(skia.ColorBLACK)
+        # Get or create cached paint
+        if self._text_paint is None:
+            self._text_paint = skia.Paint()
+            self._text_paint.setAntiAlias(True)
+            self._text_paint.setColor(skia.ColorBLACK)
         
         # Only draw visible lines
+        t0 = time.perf_counter()
         visible_top = self.scroll_y - 50
         visible_bottom = self.scroll_y + height + 50
         
@@ -445,17 +463,29 @@ class Chrome:
             
             visible_count += 1
             font = self._get_font(line_info["font_size"])
-            canvas.drawString(line_info["text"], line_info["x"], line_y, font, paint)
+            canvas.drawString(line_info["text"], line_info["x"], line_y, font, self._text_paint)
+        sub_timings['draw_text'] = time.perf_counter() - t0
         
         # Draw selection highlight
+        t0 = time.perf_counter()
         if self.selection_start and self.selection_end:
             self._draw_text_selection(canvas)
+        sub_timings['selection'] = time.perf_counter() - t0
         
         # Draw debug overlays
+        t0 = time.perf_counter()
         if self.debug_mode:
             self._draw_debug_overlays(canvas, self._layout_rects, document)
+        sub_timings['debug_overlay'] = time.perf_counter() - t0
         
+        t0 = time.perf_counter()
         canvas.restore()
+        sub_timings['restore'] = time.perf_counter() - t0
+        
+        # Store sub-timings for display
+        if self.debug_mode:
+            self._render_sub_timings = sub_timings
+            self._visible_line_count = visible_count
     
     def _get_font(self, size: int):
         """Get a cached font for the given size."""
@@ -715,9 +745,10 @@ class Chrome:
         small_font = self._get_font(9)
         
         # Calculate panel size based on profile data
-        panel_width = 180
+        panel_width = 200
         num_profile_lines = len(self._last_profile) + 2  # +2 for FPS and total
-        panel_height = 18 + num_profile_lines * 12
+        num_sub_lines = len(self._render_sub_timings) + 1 if self._render_sub_timings else 0
+        panel_height = 18 + num_profile_lines * 12 + num_sub_lines * 11 + 10
         
         # Position in top-right
         panel_x = width - panel_width - 10
@@ -753,11 +784,11 @@ class Chrome:
         canvas.drawString(f"Frame: {total_ms:.1f}ms", panel_x + 5, y, font, text_paint)
         
         # Profile breakdown
+        gray_paint = skia.Paint()
+        gray_paint.setAntiAlias(True)
+        gray_paint.setColor(skia.Color(180, 180, 180, 255))
+        
         if self._last_profile:
-            gray_paint = skia.Paint()
-            gray_paint.setAntiAlias(True)
-            gray_paint.setColor(skia.Color(180, 180, 180, 255))
-            
             # Sort by time descending
             sorted_items = sorted(
                 self._last_profile.items(), 
@@ -777,6 +808,19 @@ class Chrome:
                 else:
                     gray_paint.setColor(skia.Color(180, 180, 180, 255))
                 canvas.drawString(f"{name}: {ms:.1f}ms ({pct:.0f}%)", panel_x + 8, y, small_font, gray_paint)
+        
+        # Show render_dom sub-timings if available
+        if self._render_sub_timings:
+            y += 16
+            text_paint.setColor(skia.Color(150, 200, 255, 255))
+            canvas.drawString(f"render_dom breakdown ({self._visible_line_count} lines):", panel_x + 5, y, small_font, text_paint)
+            
+            sub_sorted = sorted(self._render_sub_timings.items(), key=lambda x: x[1], reverse=True)
+            for name, duration in sub_sorted:
+                y += 11
+                ms = duration * 1000
+                gray_paint.setColor(skia.Color(150, 180, 200, 255))
+                canvas.drawString(f"  {name}: {ms:.2f}ms", panel_x + 8, y, small_font, gray_paint)
 
     def paint(self):
         """Trigger redraw of the drawing area."""
