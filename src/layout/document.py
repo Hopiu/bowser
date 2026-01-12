@@ -7,18 +7,19 @@ from ..render.fonts import get_font, linespace
 class LayoutLine:
     """A laid-out line ready for rendering."""
 
-    def __init__(self, text: str, x: float, y: float, font_size: int, char_positions: list = None):
+    def __init__(self, text: str, x: float, y: float, font_size: int, char_positions: list = None, font_family: str = ""):
         self.text = text
         self.x = x
         self.y = y  # Top of line
         self.font_size = font_size
+        self.font_family = font_family
         self.height = linespace(font_size)
         self.width = 0
         self.char_positions = char_positions or []
 
-        # Calculate width
+        # Calculate width - pass text to get_font for proper font selection
         if text:
-            font = get_font(font_size)
+            font = get_font(font_size, font_family, text=text)
             self.width = font.measureText(text)
 
 
@@ -70,6 +71,7 @@ class DocumentLayout:
 
         for block_info in raw_blocks:
             font_size = block_info.get("font_size", 14)
+            font_family = block_info.get("font_family", "")
             text = block_info.get("text", "")
             margin_top = block_info.get("margin_top", 6)
             margin_bottom = block_info.get("margin_bottom", 10)
@@ -88,8 +90,8 @@ class DocumentLayout:
             layout_block.x = x_margin
             layout_block.y = y + margin_top
 
-            # Word wrap
-            font = get_font(font_size)
+            # Word wrap - pass text to get appropriate font
+            font = get_font(font_size, font_family, text=text)
             words = text.split()
             wrapped_lines = []
             current_line = []
@@ -123,7 +125,8 @@ class DocumentLayout:
                     x=x_margin,
                     y=y,  # Top of line, baseline is y + font_size
                     font_size=font_size,
-                    char_positions=char_positions
+                    char_positions=char_positions,
+                    font_family=font_family
                 )
 
                 layout_block.lines.append(layout_line)
@@ -163,7 +166,14 @@ class DocumentLayout:
                     # Use computed style if available
                     style = getattr(child, "computed_style", None)
                     font_size = style.get_int("font-size", 14) if style else 14
-                    blocks.append({"text": txt, "font_size": font_size, "block_type": "text", "style": style})
+                    font_family = style.get("font-family", "") if style else ""
+                    blocks.append({
+                        "text": txt,
+                        "font_size": font_size,
+                        "font_family": font_family,
+                        "block_type": "text",
+                        "style": style
+                    })
                 continue
 
             if isinstance(child, Element):
@@ -191,12 +201,14 @@ class DocumentLayout:
                     margin_top = style.get_int("margin-top", 6)
                     margin_bottom = style.get_int("margin-bottom", 10)
                     display = style.get("display", "block")
+                    font_family = style.get("font-family", "")
                 else:
                     # Fallback to hardcoded defaults
                     font_size = self._get_default_font_size(tag)
                     margin_top = self._get_default_margin_top(tag)
                     margin_bottom = self._get_default_margin_bottom(tag)
                     display = "inline" if tag in {"span", "a", "strong", "em", "b", "i", "code"} else "block"
+                    font_family = ""
 
                 # Determine block type
                 block_type = "inline" if display == "inline" else "block"
@@ -209,6 +221,7 @@ class DocumentLayout:
                 blocks.append({
                     "text": content,
                     "font_size": font_size,
+                    "font_family": font_family,
                     "margin_top": margin_top,
                     "margin_bottom": margin_bottom,
                     "block_type": block_type,

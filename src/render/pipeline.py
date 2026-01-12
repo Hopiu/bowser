@@ -82,7 +82,7 @@ class RenderPipeline:
             if baseline_y < visible_top or line.y > visible_bottom:
                 continue
 
-            font = get_font(line.font_size)
+            font = get_font(line.font_size, getattr(line, "font_family", ""), text=line.text)
             canvas.drawString(line.text, line.x, baseline_y, font, self._text_paint)
 
         # Draw debug overlays if enabled

@@ -113,10 +113,13 @@ class CSSParser:
                 self._skip_comment()
                 continue
 
-            # Parse rule
-            rule = self._parse_rule()
-            if rule:
-                self.rules.append(rule)
+            # Parse rule(s) - may return multiple rules for multi-selectors
+            rules = self._parse_rule()
+            if rules:
+                if isinstance(rules, list):
+                    self.rules.extend(rules)
+                else:
+                    self.rules.append(rules)
 
         return self.rules
 
@@ -145,8 +148,11 @@ class CSSParser:
                     break
                 self._consume()
 
-    def _parse_rule(self) -> CSSRule:
-        """Parse a single CSS rule: selector { declarations }."""
+    def _parse_rule(self):
+        """
+        Parse a single CSS rule: selector { declarations }.
+        Returns a CSSRule, or a list of CSSRules if the selector contains commas (multi-selector).
+        """
         # Parse selector
         selector_text = ""
         while self.position < len(self.css_text):
@@ -157,8 +163,6 @@ class CSSParser:
 
         if not selector_text.strip():
             return None
-
-        selector = Selector(selector_text)
 
         # Expect {
         self._skip_whitespace()
@@ -174,7 +178,15 @@ class CSSParser:
         if self._peek() == "}":
             self._consume()
 
-        return CSSRule(selector, declarations)
+        # Split multi-selectors by comma
+        selector_parts = [s.strip() for s in selector_text.split(',') if s.strip()]
+        
+        if len(selector_parts) == 1:
+            # Single selector
+            return CSSRule(Selector(selector_text), declarations)
+        else:
+            # Multi-selector: create one rule per selector with the same declarations
+            return [CSSRule(Selector(part), declarations) for part in selector_parts]
 
     def _parse_declarations(self) -> Dict[str, str]:
         """Parse property declarations inside { }."""
@@ -210,7 +222,7 @@ class CSSParser:
             prop_value = ""
             while self.position < len(self.css_text):
                 char = self._peek()
-                if char in ";}\n":
+                if char in ";}":
                     break
                 prop_value += self._consume()
 

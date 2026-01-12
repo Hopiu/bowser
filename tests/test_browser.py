@@ -184,8 +184,9 @@ class TestBrowser:
         tab = browser.new_tab("https://example.com")
         browser.close_tab(tab)
 
-        assert len(browser.tabs) == 0
-        assert browser.active_tab is None
+        # When the last tab is closed, a new tab is created
+        assert len(browser.tabs) == 1
+        assert browser.active_tab is not None
 
     def test_navigate_to(self, mock_gtk):
         browser = Browser()
