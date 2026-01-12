@@ -1,97 +1,158 @@
 # Bowser — Educational Web Browser
 
-A custom web browser built from scratch following the [browser.engineering](https://browser.engineering/) curriculum.
+A custom web browser built from scratch following the [browser.engineering](https://browser.engineering/) curriculum. Features a clean architecture with Skia-based rendering, GTK 4/Adwaita UI, and proper separation of concerns.
 
-**Status**: Early scaffolding phase (M0)
+**Status**: Milestone 2 - Basic HTML rendering with text layout
 
-## Building
+## Features
 
-### Prerequisites
-- Python 3.11+
-- GTK 4 development libraries (Debian: `libgtk-4-dev libgtk-4-1`)
-- Skia-Python (`skia-python`): `pip install skia-python`
-- PyGObject (`PyGObject`): `pip install PyGObject`
-- Graphviz (optional, for DOM visualization): `sudo apt install graphviz`
+- **Adwaita Tab Bar** - Modern GNOME-style tab management
+- **Skia Rendering** - Hardware-accelerated 2D graphics
+- **Text Layout** - Word wrapping, character-level selection
+- **DOM Parsing** - HTML parsing with proper tree structure
+- **Debug Mode** - Visual layout debugging with FPS counter
+- **DOM Visualization** - Generate visual graphs of page structure
 
-### Setup
+## Quick Start
+
 ```bash
+# Install dependencies and run
 uv sync
 uv run bowser
+
+# Browse a website
+uv run bowser example.com
+
+# Enable debug mode (shows FPS, layout boxes)
+uv run bowser example.com --debug
 ```
 
-## Usage
+## Keyboard Shortcuts
 
-### Keyboard Shortcuts
-- **Ctrl+Shift+D**: Generate and visualize DOM tree graph of current page
-  - Opens visualization in a new browser tab
-  - Displays interactive SVG graph (if Graphviz installed)
-  - Falls back to DOT format if Graphviz not available
-  - Prints tree structure to console
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+T` | New tab |
+| `Ctrl+W` | Close tab |
+| `Ctrl+L` | Focus address bar |
+| `Ctrl+Shift+D` | Generate DOM visualization |
+| `Ctrl+Shift+O` | Toggle debug mode |
 
-### Testing
-Run the test suite:
-```bash
-# Install dev dependencies
-uv sync --extra dev
-
-# Run all tests
-uv run pytest
-
-# Run with verbose output
-uv run pytest -v
-
-# Run with coverage report
-uv run pytest --cov=src --cov-report=html
-
-# Run specific test file
-uv run pytest tests/test_browser.py
-```
-
-### Development
-```bash
-# Format code
-uv run black src tests
-
-# Lint code
-uv run ruff check src tests
-
-# Type check
-uv run mypy src
-```
-
-## Project Structure
+## Architecture
 
 ```
 bowser/
 ├── src/
-│   ├── network/          # URL parsing, HTTP, cookies
-│   ├── parser/           # HTML & CSS parsers
-│   ├── layout/           # Block/inline/embedded layout
-│   ├── render/           # Paint commands, fonts, compositing
-│   ├── script/           # JavaScript integration
-│   ├── browser/          # Tab/frame/chrome orchestration
-│   └── accessibility/    # A11y tree and screen reader
-├── assets/               # Stylesheets, images
-├── tests/                # Unit tests
-├── pyproject.toml        # Dependencies & build config
-└── main.py               # Entry point
+│   ├── browser/           # Browser UI (chrome.py, tab.py)
+│   │   ├── browser.py     # Application orchestration
+│   │   ├── chrome.py      # GTK/Adwaita window, tab bar, address bar
+│   │   └── tab.py         # Tab and frame management
+│   │
+│   ├── parser/            # Document parsing
+│   │   ├── html.py        # HTML → DOM tree (Element, Text nodes)
+│   │   └── css.py         # CSS parsing (stub)
+│   │
+│   ├── layout/            # Layout calculation
+│   │   ├── document.py    # DocumentLayout - full page layout
+│   │   ├── block.py       # BlockLayout, LineLayout - block elements
+│   │   └── inline.py      # TextLayout, InlineLayout - text runs
+│   │
+│   ├── render/            # Painting & rendering
+│   │   ├── pipeline.py    # RenderPipeline - coordinates layout/paint
+│   │   ├── fonts.py       # FontCache - Skia font management
+│   │   ├── paint.py       # DisplayList, DrawText, DrawRect
+│   │   └── composite.py   # Layer compositing
+│   │
+│   ├── network/           # Networking
+│   │   ├── http.py        # HTTP client with redirects
+│   │   ├── url.py         # URL parsing and normalization
+│   │   └── cookies.py     # Cookie management
+│   │
+│   ├── debug/             # Development tools
+│   │   └── dom_graph.py   # DOM tree visualization
+│   │
+│   └── templates.py       # Page templates (start page, errors)
+│
+├── tests/                 # Test suite
+└── main.py                # Entry point
 ```
 
-## Development Milestones
+### Design Principles
 
-- [ ] **M0**: Project scaffold ✅
-- [ ] **M1**: Display "Hello World" in GTK window with manual URL fetch & paint
-- [ ] **M2**: Render plain HTML with text wrapping
-- [ ] **M3**: Parse and apply basic CSS
+**Separation of Concerns:**
+- `parser/` - Pure DOM data structures (Element, Text)
+- `layout/` - Position and size calculations (x, y, width, height)
+- `render/` - Drawing commands and font management
+- `browser/` - UI only (tabs, address bar, event handling)
+
+**Key Classes:**
+
+| Class | Package | Responsibility |
+|-------|---------|----------------|
+| `Element`, `Text` | parser | DOM tree nodes |
+| `DocumentLayout` | layout | Page layout with line positioning |
+| `LayoutLine`, `LayoutBlock` | layout | Positioned text with bounding boxes |
+| `RenderPipeline` | render | Coordinates layout → paint |
+| `FontCache` | render | Skia font caching |
+| `Chrome` | browser | GTK window, delegates to RenderPipeline |
+
+## Development
+
+### Prerequisites
+
+- Python 3.11+
+- GTK 4 (`libgtk-4-dev libgtk-4-1`)
+- libadwaita (`libadwaita-1-dev`)
+- Graphviz (optional, for DOM visualization)
+
+```bash
+# Debian/Ubuntu
+sudo apt install libgtk-4-dev libadwaita-1-dev graphviz
+```
+
+### Testing
+
+```bash
+uv run pytest              # Run all tests
+uv run pytest -v           # Verbose output
+uv run pytest --cov=src    # Coverage report
+```
+
+### Code Quality
+
+```bash
+uv run black src tests     # Format code
+uv run ruff check src      # Lint
+uv run mypy src            # Type check
+```
+
+## Debug Mode
+
+Enable with `--debug` flag or press `Ctrl+Shift+O` at runtime.
+
+Shows:
+- **FPS counter** with frame timing breakdown
+- **Layout boxes** colored by element type:
+  - Red: Block elements (`<div>`, `<p>`)
+  - Blue: Inline elements (`<span>`, `<a>`)
+  - Green: List items (`<li>`)
+
+## Milestones
+
+- [x] **M0**: Project scaffold
+- [x] **M1**: GTK window with Skia rendering
+- [x] **M2**: HTML parsing and text layout
+- [ ] **M3**: CSS parsing and styling
 - [ ] **M4**: Clickable links and navigation
 - [ ] **M5**: Form input and submission
-- [ ] **M6**: JavaScript execution (embed QuickJS)
+- [ ] **M6**: JavaScript execution
 - [ ] **M7**: Event handling
 - [ ] **M8**: Images and iframes
-- [ ] **M9**: Animations and visual effects
-- [ ] **M10**: Accessibility and keyboard navigation
 
 ## References
 
 - [Web Browser Engineering](https://browser.engineering/) — O'Reilly book
-- [Let's Build a Browser Engine](https://limpet.net/mbrubeck/2014/08/08/toy-layout-engine-1.html) — Matt Brubeck's Rust tutorial
+- [Let's Build a Browser Engine](https://limpet.net/mbrubeck/2014/08/08/toy-layout-engine-1.html) — Matt Brubeck
+
+## License
+
+MIT

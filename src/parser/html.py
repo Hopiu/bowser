@@ -27,12 +27,12 @@ class Element:
 
     def __repr__(self):  # pragma: no cover - debug helper
         return f"Element({self.tag!r}, {self.attributes!r})"
-    
+
     @property
     def bounding_box(self):
         """Get bounding box from layout if available."""
         if self.layout:
-            return (self.layout.x, self.layout.y, 
+            return (self.layout.x, self.layout.y,
                     self.layout.x + self.layout.width,
                     self.layout.y + self.layout.height)
         return None
@@ -99,7 +99,7 @@ class _DOMBuilder(HTMLParser):
             return
         if self._skip_depth > 0:
             return
-        
+
         # Skip html/head tags - we handle structure ourselves
         if tag == "html":
             return  # Use our root instead
@@ -114,14 +114,14 @@ class _DOMBuilder(HTMLParser):
                 self.root.children.append(self._body)
             self.current = self._body
             return
-            
+
         attr_dict = {k: v for k, v in attrs}
         el = Element(tag, attr_dict)
-        
+
         # Ensure we're inside a body
         if self.current is self.root:
             self._ensure_body()
-        
+
         self._push(el)
 
     def handle_endtag(self, tag):
@@ -145,11 +145,11 @@ class _DOMBuilder(HTMLParser):
         text = re.sub(r"\s+", " ", text)
         if not text.strip():
             return  # Skip whitespace-only text at root level
-        
+
         # Ensure we're inside a body for text content
         if self.current is self.root:
             self._ensure_body()
-        
+
         self._append_text(text)
 
     def handle_entityref(self, name):
