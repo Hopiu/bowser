@@ -2,13 +2,14 @@
 
 A custom web browser built from scratch following the [browser.engineering](https://browser.engineering/) curriculum. Features a clean architecture with Skia-based rendering, GTK 4/Adwaita UI, and proper separation of concerns.
 
-**Status**: Milestone 2 - Basic HTML rendering with text layout
+**Status**: Milestone 3 - Basic HTML rendering with text layout and image support
 
 ## Features
 
 - **Adwaita Tab Bar** - Modern GNOME-style tab management
 - **Skia Rendering** - Hardware-accelerated 2D graphics
 - **Text Layout** - Word wrapping, character-level selection
+- **Image Support** - Load and render images from HTTP, data URLs, and local files
 - **DOM Parsing** - HTML parsing with proper tree structure
 - **Debug Mode** - Visual layout debugging with FPS counter
 - **DOM Visualization** - Generate visual graphs of page structure
@@ -54,18 +55,21 @@ bowser/
 │   ├── layout/            # Layout calculation
 │   │   ├── document.py    # DocumentLayout - full page layout
 │   │   ├── block.py       # BlockLayout, LineLayout - block elements
-│   │   └── inline.py      # TextLayout, InlineLayout - text runs
+│   │   ├── inline.py      # TextLayout, InlineLayout - text runs
+│   │   └── embed.py       # ImageLayout - embedded content
 │   │
 │   ├── render/            # Painting & rendering
 │   │   ├── pipeline.py    # RenderPipeline - coordinates layout/paint
 │   │   ├── fonts.py       # FontCache - Skia font management
-│   │   ├── paint.py       # DisplayList, DrawText, DrawRect
+│   │   ├── paint.py       # DisplayList, DrawText, DrawRect, DrawImage
 │   │   └── composite.py   # Layer compositing
 │   │
 │   ├── network/           # Networking
 │   │   ├── http.py        # HTTP client with redirects
 │   │   ├── url.py         # URL parsing and normalization
-│   │   └── cookies.py     # Cookie management
+│   │   ├── cookies.py     # Cookie management
+│   │   ├── images.py      # Image loading and caching
+│   │   └── tasks.py       # Async task queue for background loading
 │   │
 │   ├── debug/             # Development tools
 │   │   └── dom_graph.py   # DOM tree visualization
@@ -91,8 +95,11 @@ bowser/
 | `Element`, `Text` | parser | DOM tree nodes |
 | `DocumentLayout` | layout | Page layout with line positioning |
 | `LayoutLine`, `LayoutBlock` | layout | Positioned text with bounding boxes |
+| `ImageLayout`, `LayoutImage` | layout | Image sizing and positioning |
 | `RenderPipeline` | render | Coordinates layout → paint |
+| `DrawImage` | render | Image rendering command |
 | `FontCache` | render | Skia font caching |
+| `ImageCache` | network | Image loading and caching |
 | `Chrome` | browser | GTK window, delegates to RenderPipeline |
 
 ## Development
@@ -141,12 +148,70 @@ Shows:
 - [x] **M0**: Project scaffold
 - [x] **M1**: GTK window with Skia rendering
 - [x] **M2**: HTML parsing and text layout
-- [ ] **M3**: CSS parsing and styling
-- [ ] **M4**: Clickable links and navigation
-- [ ] **M5**: Form input and submission
-- [ ] **M6**: JavaScript execution
-- [ ] **M7**: Event handling
-- [ ] **M8**: Images and iframes
+- [x] **M3**: Image loading and rendering
+- [ ] **M4**: CSS parsing and styling
+- [ ] **M5**: Clickable links and navigation
+- [ ] **M6**: Form input and submission
+- [ ] **M7**: JavaScript execution
+- [ ] **M8**: Event handling
+
+## Image Support
+
+Bowser supports loading and rendering images from multiple sources:
+
+### Supported Sources
+
+- **HTTP/HTTPS URLs**: `<img src="https://example.com/image.png">`
+- **Data URLs**: `<img src="data:image/png;base64,...">`
+- **Local files**: `<img src="file:///path/to/image.png">`
+
+### Features
+
+- **Async loading**: Images load in background threads, keeping UI responsive
+- **Smart sizing**: Respects width/height attributes, maintains aspect ratios
+- **Caching**: Thread-safe global image cache prevents redundant loads
+- **Alt text placeholders**: Shows placeholder with alt text when images fail
+- **Format support**: PNG, JPEG, GIF, WebP, and more (via Skia)
+- **Viewport culling**: Only renders visible images for performance
+- **Progressive display**: Page shows immediately, images appear as they load
+
+### Example
+
+```html
+<!-- Basic image -->
+<img src="photo.jpg">
+
+<!-- Sized image with aspect ratio -->
+<img src="photo.jpg" width="300">
+
+<!-- With alt text for accessibility -->
+<img src="photo.jpg" alt="A beautiful sunset">
+
+<!-- Data URL (embedded image) -->
+<img src="data:image/png;base64,iVBORw0KG...">
+```
+
+### Architecture
+
+```
+HTML <img> tag
+    ↓
+ImageLayout.load(async=True)
+    ↓
+TaskQueue (background thread pool)
+    ↓
+load_image() → HTTP/file/data URL
+    ↓                    ↓
+ImageCache          GLib.idle_add
+(thread-safe)            ↓
+                   on_complete callback
+                         ↓
+                   ImageLayout.image = loaded
+                         ↓
+                   RenderPipeline._request_redraw()
+                         ↓
+                   DrawImage.execute() → Canvas
+```
 
 ## References
 

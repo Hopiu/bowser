@@ -149,6 +149,9 @@ class Chrome:
         self.drawing_area.set_can_focus(True)  # Allow focus for keyboard events
         self.drawing_area.set_focusable(True)
         content_box.append(self.drawing_area)
+        
+        # Set up redraw callback for async image loading
+        self.render_pipeline.set_redraw_callback(self._request_redraw)
 
         # Add scroll controller for mouse wheel
         scroll_controller = Gtk.EventControllerScroll.new(
@@ -405,11 +408,16 @@ class Chrome:
 
     def _render_dom_content(self, canvas, document, width: int, height: int):
         """Render the DOM content using the render pipeline."""
-
         sub_timings = {}
 
         # Sync debug mode with render pipeline
         self.render_pipeline.debug_mode = self.debug_mode
+        
+        # Set base URL for resolving relative image paths
+        if self.browser.active_tab and self.browser.active_tab.current_url:
+            self.render_pipeline.base_url = str(self.browser.active_tab.current_url)
+        else:
+            self.render_pipeline.base_url = None
 
         # Use render pipeline for layout and rendering
         t0 = time.perf_counter()
@@ -551,8 +559,19 @@ class Chrome:
 
     def paint(self):
         """Trigger redraw of the drawing area."""
-        if self.drawing_area:
+        if self.drawing_area and self.window:
             self.drawing_area.queue_draw()
+    
+    def _request_redraw(self):
+        """Request a redraw, called when async images finish loading."""
+        # This is called from the main thread via GLib.idle_add
+        try:
+            # Only redraw if we have a valid window and drawing area
+            if self.window and self.drawing_area and self.browser.active_tab:
+                self.logger.debug("Async image loaded, requesting redraw")
+                self.drawing_area.queue_draw()
+        except Exception as e:
+            self.logger.warning(f"Failed to request redraw: {e}")
 
     def _setup_keyboard_shortcuts(self):
         """Setup keyboard event handling for shortcuts."""

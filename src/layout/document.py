@@ -2,6 +2,7 @@
 
 from ..parser.html import Element, Text
 from ..render.fonts import get_font, linespace
+from .embed import ImageLayout
 
 
 class LayoutLine:
@@ -23,6 +24,28 @@ class LayoutLine:
             self.width = font.measureText(text)
 
 
+class LayoutImage:
+    """A laid-out image ready for rendering."""
+
+    def __init__(self, image_layout: ImageLayout, x: float, y: float):
+        self.image_layout = image_layout
+        self.x = x
+        self.y = y
+        # Store initial dimensions but also provide dynamic access
+        self._initial_width = image_layout.width
+        self._initial_height = image_layout.height
+    
+    @property
+    def width(self) -> float:
+        """Get current width (may update after async image load)."""
+        return self.image_layout.width if self.image_layout.width > 0 else self._initial_width
+    
+    @property
+    def height(self) -> float:
+        """Get current height (may update after async image load)."""
+        return self.image_layout.height if self.image_layout.height > 0 else self._initial_height
+
+
 class LayoutBlock:
     """A laid-out block with its lines."""
 
@@ -39,11 +62,14 @@ class LayoutBlock:
 class DocumentLayout:
     """Layout engine for a document."""
 
-    def __init__(self, node, frame=None):
+    def __init__(self, node, frame=None, base_url=None, async_images: bool = False):
         self.node = node
         self.frame = frame
+        self.base_url = base_url  # For resolving relative image URLs
+        self.async_images = async_images  # Load images in background
         self.blocks = []  # List of LayoutBlock
         self.lines = []   # Flat list of all LayoutLine for rendering
+        self.images = []  # List of LayoutImage for rendering
         self.width = 0
         self.height = 0
 
@@ -60,6 +86,7 @@ class DocumentLayout:
 
         self.blocks = []
         self.lines = []
+        self.images = []
 
         # Find body
         body = self._find_body(self.node)
@@ -70,6 +97,25 @@ class DocumentLayout:
         raw_blocks = self._collect_blocks(body)
 
         for block_info in raw_blocks:
+            # Handle images separately
+            if block_info.get("is_image"):
+                image_layout = block_info.get("image_layout")
+                if image_layout:
+                    margin_top = block_info.get("margin_top", 6)
+                    margin_bottom = block_info.get("margin_bottom", 10)
+                    y += margin_top
+                    
+                    # Position the image
+                    image_layout.x = x_margin
+                    image_layout.y = y
+                    
+                    # Add to images list for rendering
+                    layout_image = LayoutImage(image_layout, x_margin, y)
+                    self.images.append(layout_image)
+                    
+                    y += image_layout.height + margin_bottom
+                continue
+            
             font_size = block_info.get("font_size", 14)
             font_family = block_info.get("font_family", "")
             text = block_info.get("text", "")
@@ -182,12 +228,39 @@ class DocumentLayout:
                 # Skip style and script tags - they shouldn't be rendered
                 if tag in {"style", "script", "head", "title", "meta", "link"}:
                     continue
+                
+                # Handle img tags
+                if tag == "img":
+                    image_layout = ImageLayout(child)
+                    image_layout.load(self.base_url, async_load=self.async_images)
+                    image_layout.layout(max_width=self.width - 40 if self.width > 40 else 800)
+                    
+                    # Get computed style for margins
+                    style = getattr(child, "computed_style", None)
+                    if style:
+                        margin_top = style.get_int("margin-top", 6)
+                        margin_bottom = style.get_int("margin-bottom", 10)
+                    else:
+                        margin_top = 6
+                        margin_bottom = 10
+                    
+                    blocks.append({
+                        "is_image": True,
+                        "image_layout": image_layout,
+                        "margin_top": margin_top,
+                        "margin_bottom": margin_bottom,
+                    })
+                    continue
 
                 # Container elements - just recurse, don't add as blocks
                 if tag in {"ul", "ol", "div", "section", "article", "main", "header", "footer", "nav"}:
                     blocks.extend(self._collect_blocks(child))
                     continue
 
+                # For other elements (p, h1, etc), first collect any embedded images
+                embedded_images = self._collect_images(child)
+                blocks.extend(embedded_images)
+                
                 content = self._text_of(child)
                 if not content:
                     continue
@@ -253,6 +326,40 @@ class DocumentLayout:
         }
         return margins.get(tag, 0)
 
+    def _collect_images(self, node) -> list:
+        """Recursively collect all img elements from a node."""
+        images = []
+        
+        if not isinstance(node, Element):
+            return images
+        
+        for child in getattr(node, "children", []):
+            if isinstance(child, Element):
+                if child.tag.lower() == "img":
+                    image_layout = ImageLayout(child)
+                    image_layout.load(self.base_url, async_load=self.async_images)
+                    image_layout.layout(max_width=self.width - 40 if self.width > 40 else 800)
+                    
+                    style = getattr(child, "computed_style", None)
+                    if style:
+                        margin_top = style.get_int("margin-top", 6)
+                        margin_bottom = style.get_int("margin-bottom", 10)
+                    else:
+                        margin_top = 6
+                        margin_bottom = 10
+                    
+                    images.append({
+                        "is_image": True,
+                        "image_layout": image_layout,
+                        "margin_top": margin_top,
+                        "margin_bottom": margin_bottom,
+                    })
+                else:
+                    # Recurse into children
+                    images.extend(self._collect_images(child))
+        
+        return images
+    
     def _text_of(self, node) -> str:
         """Extract text content from a node."""
         if isinstance(node, Text):

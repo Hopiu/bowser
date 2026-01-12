@@ -1,11 +1,12 @@
 """Render pipeline - coordinates layout and painting."""
 
 import skia
-from typing import Optional
+from typing import Optional, Callable
 from ..parser.html import Element
 from ..layout.document import DocumentLayout
+from ..layout.embed import ImageLayout
 from .fonts import get_font
-from .paint import DisplayList
+from .paint import DisplayList, DrawImage
 
 
 class RenderPipeline:
@@ -16,13 +17,32 @@ class RenderPipeline:
         self._layout: Optional[DocumentLayout] = None
         self._layout_width = 0
         self._layout_doc_id = None
+        self._layout_base_url = None
 
         # Paint cache
         self._text_paint: Optional[skia.Paint] = None
         self._display_list: Optional[DisplayList] = None
+        
+        # Base URL for resolving relative paths
+        self.base_url: Optional[str] = None
 
         # Debug mode
         self.debug_mode = False
+        
+        # Async image loading
+        self.async_images = True  # Enable async image loading by default
+        self._on_needs_redraw: Optional[Callable[[], None]] = None
+    
+    def set_redraw_callback(self, callback: Callable[[], None]):
+        """Set a callback to be called when async images finish loading."""
+        self._on_needs_redraw = callback
+        
+        # Also set on ImageLayout class for global notification
+        def on_image_loaded():
+            if self._on_needs_redraw:
+                self._on_needs_redraw()
+        
+        ImageLayout._on_any_image_loaded = on_image_loaded
 
     def layout(self, document: Element, width: int) -> DocumentLayout:
         """
@@ -31,17 +51,23 @@ class RenderPipeline:
         """
         doc_id = id(document)
 
-        # Check cache
+        # Check cache (also invalidate if base_url changed)
         if (self._layout_doc_id == doc_id and
             self._layout_width == width and
+            self._layout_base_url == self.base_url and
             self._layout is not None):
             return self._layout
 
-        # Build new layout
-        self._layout = DocumentLayout(document)
+        # Build new layout with base_url for resolving image paths
+        self._layout = DocumentLayout(
+            document, 
+            base_url=self.base_url,
+            async_images=self.async_images
+        )
         self._layout.layout(width)
         self._layout_doc_id = doc_id
         self._layout_width = width
+        self._layout_base_url = self.base_url
 
         return self._layout
 
@@ -60,7 +86,7 @@ class RenderPipeline:
         # Get or update layout
         layout = self.layout(document, width)
 
-        if not layout.lines:
+        if not layout.lines and not layout.images:
             return
 
         # Apply scroll transform
@@ -73,10 +99,11 @@ class RenderPipeline:
             self._text_paint.setAntiAlias(True)
             self._text_paint.setColor(skia.ColorBLACK)
 
-        # Render visible lines only
+        # Render visible content
         visible_top = scroll_y - 50
         visible_bottom = scroll_y + height + 50
 
+        # Render visible lines
         for line in layout.lines:
             baseline_y = line.y + line.font_size
             if baseline_y < visible_top or line.y > visible_bottom:
@@ -84,6 +111,28 @@ class RenderPipeline:
 
             font = get_font(line.font_size, getattr(line, "font_family", ""), text=line.text)
             canvas.drawString(line.text, line.x, baseline_y, font, self._text_paint)
+
+        # Render visible images (both loaded and placeholder)
+        for layout_image in layout.images:
+            image_bottom = layout_image.y + layout_image.height
+            if image_bottom < visible_top or layout_image.y > visible_bottom:
+                continue
+
+            image_layout = layout_image.image_layout
+            # Use image_layout dimensions directly for accurate sizing after async load
+            img_width = image_layout.width if image_layout.width > 0 else layout_image.width
+            img_height = image_layout.height if image_layout.height > 0 else layout_image.height
+            
+            # Always create DrawImage command - it handles None images as placeholders
+            draw_cmd = DrawImage(
+                layout_image.x, 
+                layout_image.y,
+                img_width, 
+                img_height,
+                image_layout.image,  # May be None, DrawImage handles this
+                image_layout.alt_text
+            )
+            draw_cmd.execute(canvas)
 
         # Draw debug overlays if enabled
         if self.debug_mode:
