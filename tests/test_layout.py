@@ -145,6 +145,23 @@ class TestDocumentLayout:
 
         assert len(lines) > 1  # Should wrap to multiple lines
 
+    def test_document_layout_skips_style_tags(self):
+        """Style tags should not be rendered as text."""
+        body = Element("body")
+        p = Element("p")
+        p.children = [Text("Visible text")]
+        style = Element("style")
+        style.children = [Text("body { color: red; }")]
+        body.children = [p, style]
+
+        layout = DocumentLayout(body)
+        lines = layout.layout(800)
+
+        assert len(lines) == 1
+        assert lines[0].text == "Visible text"
+        # CSS should not appear in rendered text
+        assert not any("color" in line.text for line in lines)
+
     def test_document_layout_char_positions(self):
         body = Element("body")
         p = Element("p")

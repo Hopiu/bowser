@@ -48,15 +48,23 @@ class TestParseHTML:
         assert "alert" not in joined
         assert "script" not in joined.lower()
 
-    def test_parse_removes_style_tags(self):
+    def test_parse_keeps_style_tags(self):
+        """Style tags are now kept in the DOM for CSS extraction."""
         html = "<html><body>Text<style>body{color:red;}</style>More</body></html>"
         root = parse_html(html)
 
         body = root.children[0]
-        joined = " ".join(collect_text(body))
-        assert "Text" in joined
-        assert "More" in joined
-        assert "color" not in joined
+        # Find style element
+        style_elem = None
+        for child in body.children:
+            if hasattr(child, "tag") and child.tag == "style":
+                style_elem = child
+                break
+        
+        assert style_elem is not None
+        # Style content should be in the element
+        joined = " ".join(collect_text(style_elem))
+        assert "color" in joined
 
     def test_parse_decodes_entities(self):
         html = "<html><body>&lt;div&gt; &amp; &quot;test&quot;</body></html>"

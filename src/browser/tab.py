@@ -5,7 +5,7 @@ import logging
 
 from ..network.url import URL
 from ..network import http
-from ..parser.html import parse_html, Element
+from ..parser.html import parse_html_with_styles, Element
 from ..templates import render_startpage, render_error_page
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ class Frame:
         url_str = str(url)
         if url_str.startswith("about:startpage"):
             html = render_startpage()
-            self.document = parse_html(html)
+            self.document = parse_html_with_styles(html)
             self.tab.current_url = url
             return
 
@@ -40,7 +40,7 @@ class Frame:
             graph_path = params.get('path', [''])[0]
 
             html = render_dom_graph_page(graph_path)
-            self.document = parse_html(html)
+            self.document = parse_html_with_styles(html)
             self.tab.current_url = url
             return
 
@@ -52,17 +52,17 @@ class Frame:
                 text = body.decode('utf-8', errors='replace')
 
                 # Parse HTML
-                self.document = parse_html(text)
+                self.document = parse_html_with_styles(text)
                 self.tab.current_url = url
             else:
                 # Error handling - show error page
                 html = render_error_page(status, str(url))
-                self.document = parse_html(html)
+                self.document = parse_html_with_styles(html)
 
         except Exception as e:
             # Network error - show error page
             html = render_error_page(0, str(url), str(e))
-            self.document = parse_html(html)
+            self.document = parse_html_with_styles(html)
             logger.error(f"Failed to load {url}: {e}")
 
 

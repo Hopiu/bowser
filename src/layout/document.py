@@ -160,62 +160,85 @@ class DocumentLayout:
             if isinstance(child, Text):
                 txt = child.text.strip()
                 if txt:
-                    blocks.append({"text": txt, "font_size": 14, "block_type": "text"})
+                    # Use computed style if available
+                    style = getattr(child, "computed_style", None)
+                    font_size = style.get_int("font-size", 14) if style else 14
+                    blocks.append({"text": txt, "font_size": font_size, "block_type": "text", "style": style})
                 continue
 
             if isinstance(child, Element):
                 tag = child.tag.lower()
+
+                # Skip style and script tags - they shouldn't be rendered
+                if tag in {"style", "script", "head", "title", "meta", "link"}:
+                    continue
+
+                # Container elements - just recurse, don't add as blocks
+                if tag in {"ul", "ol", "div", "section", "article", "main", "header", "footer", "nav"}:
+                    blocks.extend(self._collect_blocks(child))
+                    continue
+
                 content = self._text_of(child)
                 if not content:
                     continue
 
-                if tag == "h1":
-                    blocks.append({
-                        "text": content, "font_size": 24,
-                        "margin_top": 12, "margin_bottom": 12,
-                        "block_type": "block", "tag": "h1"
-                    })
-                elif tag == "h2":
-                    blocks.append({
-                        "text": content, "font_size": 20,
-                        "margin_top": 10, "margin_bottom": 10,
-                        "block_type": "block", "tag": "h2"
-                    })
-                elif tag == "h3":
-                    blocks.append({
-                        "text": content, "font_size": 18,
-                        "margin_top": 8, "margin_bottom": 8,
-                        "block_type": "block", "tag": "h3"
-                    })
-                elif tag == "p":
-                    blocks.append({
-                        "text": content, "font_size": 14,
-                        "margin_top": 6, "margin_bottom": 12,
-                        "block_type": "block", "tag": "p"
-                    })
-                elif tag == "li":
-                    blocks.append({
-                        "text": content, "font_size": 14, "bullet": True,
-                        "margin_top": 4, "margin_bottom": 4,
-                        "block_type": "list-item", "tag": "li"
-                    })
-                elif tag in {"ul", "ol"}:
-                    blocks.extend(self._collect_blocks(child))
-                elif tag in {"span", "a", "strong", "em", "b", "i", "code"}:
-                    blocks.append({
-                        "text": content, "font_size": 14,
-                        "block_type": "inline", "tag": tag
-                    })
-                elif tag in {"div", "section", "article", "main", "header", "footer", "nav"}:
-                    # Container elements - recurse into children
-                    blocks.extend(self._collect_blocks(child))
+                # Get computed style for this element
+                style = getattr(child, "computed_style", None)
+
+                # Extract style properties
+                if style:
+                    font_size = style.get_int("font-size", 14)
+                    margin_top = style.get_int("margin-top", 6)
+                    margin_bottom = style.get_int("margin-bottom", 10)
+                    display = style.get("display", "block")
                 else:
-                    blocks.append({
-                        "text": content, "font_size": 14,
-                        "block_type": "block", "tag": tag
-                    })
+                    # Fallback to hardcoded defaults
+                    font_size = self._get_default_font_size(tag)
+                    margin_top = self._get_default_margin_top(tag)
+                    margin_bottom = self._get_default_margin_bottom(tag)
+                    display = "inline" if tag in {"span", "a", "strong", "em", "b", "i", "code"} else "block"
+
+                # Determine block type
+                block_type = "inline" if display == "inline" else "block"
+                if tag == "li" or display == "list-item":
+                    block_type = "list-item"
+
+                # Add bullet for list items
+                bullet = (tag == "li" or display == "list-item")
+
+                blocks.append({
+                    "text": content,
+                    "font_size": font_size,
+                    "margin_top": margin_top,
+                    "margin_bottom": margin_bottom,
+                    "block_type": block_type,
+                    "tag": tag,
+                    "bullet": bullet,
+                    "style": style
+                })
 
         return blocks
+
+    def _get_default_font_size(self, tag: str) -> int:
+        """Get default font size for a tag (fallback when no styles)."""
+        sizes = {
+            "h1": 24, "h2": 20, "h3": 18, "h4": 16, "h5": 15, "h6": 14
+        }
+        return sizes.get(tag, 14)
+
+    def _get_default_margin_top(self, tag: str) -> int:
+        """Get default top margin for a tag (fallback when no styles)."""
+        margins = {
+            "h1": 12, "h2": 10, "h3": 8, "p": 6, "li": 4
+        }
+        return margins.get(tag, 0)
+
+    def _get_default_margin_bottom(self, tag: str) -> int:
+        """Get default bottom margin for a tag (fallback when no styles)."""
+        margins = {
+            "h1": 12, "h2": 10, "h3": 8, "p": 12, "li": 4
+        }
+        return margins.get(tag, 0)
 
     def _text_of(self, node) -> str:
         """Extract text content from a node."""

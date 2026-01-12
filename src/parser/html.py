@@ -94,7 +94,7 @@ class _DOMBuilder(HTMLParser):
 
     # HTMLParser callbacks
     def handle_starttag(self, tag, attrs):
-        if tag in {"script", "style"}:
+        if tag in {"script"}:
             self._skip_depth += 1
             return
         if self._skip_depth > 0:
@@ -104,7 +104,7 @@ class _DOMBuilder(HTMLParser):
         if tag == "html":
             return  # Use our root instead
         if tag == "head":
-            self._skip_depth += 1  # Skip head content
+            # We skip head but need to preserve style tags
             return
         if tag == "body":
             if self._body is None:
@@ -113,6 +113,13 @@ class _DOMBuilder(HTMLParser):
                 self._body = Element("body", attr_dict, parent=self.root)
                 self.root.children.append(self._body)
             self.current = self._body
+            return
+
+        # Handle style tags - keep them in the tree for CSS extraction
+        if tag == "style":
+            attr_dict = {k: v for k, v in attrs}
+            el = Element(tag, attr_dict)
+            self._push(el)
             return
 
         attr_dict = {k: v for k, v in attrs}
@@ -125,13 +132,13 @@ class _DOMBuilder(HTMLParser):
         self._push(el)
 
     def handle_endtag(self, tag):
-        if tag in {"script", "style", "head"}:
+        if tag in {"script"}:
             if self._skip_depth > 0:
                 self._skip_depth -= 1
             return
         if self._skip_depth > 0:
             return
-        if tag in {"html", "body"}:
+        if tag in {"html", "body", "head"}:
             return  # Don't pop these
         self._pop(tag)
 
@@ -171,3 +178,74 @@ def parse_html(html_text: str) -> Element:
     parser.feed(html_text)
     parser.close()
     return parser.root
+
+
+def parse_html_with_styles(html_text: str, apply_styles: bool = True) -> Element:
+    """
+    Parse HTML and optionally extract and apply CSS styles.
+
+    Args:
+        html_text: The HTML source code
+        apply_styles: Whether to parse <style> tags and apply styles
+
+    Returns:
+        The root element with computed_style attributes on each node
+    """
+    from .css import parse as parse_css
+    from .style import StyleResolver
+    import os
+    from pathlib import Path
+
+    # Parse HTML
+    root = parse_html(html_text)
+
+    if not apply_styles:
+        return root
+
+    # Load default stylesheet
+    css_rules = []
+    default_css_path = Path(__file__).parent.parent.parent / "assets" / "default.css"
+    if default_css_path.exists():
+        with open(default_css_path, "r", encoding="utf-8") as f:
+            default_css = f.read()
+            default_rules = parse_css(default_css)
+            css_rules.extend(default_rules)
+
+    # Extract CSS from <style> tags
+    style_elements = _find_elements_by_tag(root, "style")
+
+    for style_elem in style_elements:
+        # Extract text content from style element
+        css_text = _text_of_element(style_elem)
+        if css_text:
+            rules = parse_css(css_text)
+            css_rules.extend(rules)
+
+    # Create style resolver and apply to tree
+    resolver = StyleResolver(css_rules)
+    resolver.resolve_tree(root)
+
+    return root
+
+
+def _find_elements_by_tag(node, tag: str) -> list:
+    """Find all elements with a given tag name."""
+    results = []
+    if isinstance(node, Element) and node.tag == tag:
+        results.append(node)
+    if hasattr(node, "children"):
+        for child in node.children:
+            results.extend(_find_elements_by_tag(child, tag))
+    return results
+
+
+def _text_of_element(node) -> str:
+    """Extract text content from an element."""
+    if isinstance(node, Text):
+        return node.text
+    if isinstance(node, Element):
+        parts = []
+        for child in node.children:
+            parts.append(_text_of_element(child))
+        return " ".join([p for p in parts if p])
+    return ""
