@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Browser entry and orchestration."""
 
 import gi

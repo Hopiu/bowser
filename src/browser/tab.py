@@ -1,12 +1,15 @@
 """Tab and frame orchestration stubs."""
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import logging
 
 from ..network.url import URL
 from ..network import http
 from ..parser.html import parse_html, Element
 from ..templates import render_startpage, render_error_page
+
+if TYPE_CHECKING:
+    from .browser import Browser
 
 
 class Frame:
@@ -19,7 +22,7 @@ class Frame:
     def load(self, url: URL, payload: Optional[bytes] = None):
         """Fetch and parse the URL content."""
         logger = logging.getLogger("bowser.frame")
-        
+
         # Handle special about: URLs
         url_str = str(url)
         if url_str.startswith("about:startpage"):
@@ -27,7 +30,7 @@ class Frame:
             self.document = parse_html(html)
             self.tab.current_url = url
             return
-        
+
         if url_str.startswith("about:dom-graph"):
             # Extract path parameter
             from urllib.parse import urlparse, parse_qs
@@ -35,19 +38,19 @@ class Frame:
             parsed = urlparse(url_str)
             params = parse_qs(parsed.query)
             graph_path = params.get('path', [''])[0]
-            
+
             html = render_dom_graph_page(graph_path)
             self.document = parse_html(html)
             self.tab.current_url = url
             return
-        
+
         try:
             status, content_type, body = http.request(url, payload)
-            
+
             if status == 200:
                 # Decode response
                 text = body.decode('utf-8', errors='replace')
-                
+
                 # Parse HTML
                 self.document = parse_html(text)
                 self.tab.current_url = url
@@ -55,7 +58,7 @@ class Frame:
                 # Error handling - show error page
                 html = render_error_page(status, str(url))
                 self.document = parse_html(html)
-                
+
         except Exception as e:
             # Network error - show error page
             html = render_error_page(0, str(url), str(e))
