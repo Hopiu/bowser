@@ -179,7 +179,7 @@
         <div class="error">
             {{ error }}
         </div>
-        {% elif is_svg %}
+        {% elif is_svg or is_png %}
         <div class="legend">
             <h3>Color Legend</h3>
             <div class="legend-grid">
@@ -210,8 +210,12 @@
             </div>
         </div>
         
-        <div class="graph-wrapper">
+        <div class="graph-wrapper" {% if is_png %}style="display: block; width: 100%;"{% endif %}>
+            {% if is_png %}
+            <img src="data:image/png;base64,{{ graph_content }}" alt="DOM Graph" style="max-width: 100%; height: auto; display: block;">
+            {% else %}
             {{ graph_content|safe }}
+            {% endif %}
         </div>
         {% else %}
         <div class="install-note">
