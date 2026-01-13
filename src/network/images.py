@@ -27,6 +27,8 @@ class ImageCache:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
                 cls._instance._cache = {}
+                cls._instance._failed = set()  # URLs that failed to load
+                cls._instance._pending = set()  # URLs currently being loaded
                 cls._instance._cache_lock = threading.Lock()
             return cls._instance
 
@@ -39,22 +41,86 @@ class ImageCache:
         """Cache an image by URL."""
         with self._cache_lock:
             self._cache[url] = image
+            self._pending.discard(url)  # No longer pending
 
     def has(self, url: str) -> bool:
         """Check if URL is cached."""
         with self._cache_lock:
             return url in self._cache
 
+    def mark_pending(self, url: str) -> bool:
+        """Mark a URL as pending load. Returns False if already pending/cached/failed."""
+        with self._cache_lock:
+            if url in self._cache or url in self._failed or url in self._pending:
+                return False
+            self._pending.add(url)
+            return True
+
+    def mark_failed(self, url: str):
+        """Mark a URL as failed to load (to prevent retries)."""
+        with self._cache_lock:
+            self._failed.add(url)
+            self._pending.discard(url)  # No longer pending
+
+    def has_failed(self, url: str) -> bool:
+        """Check if URL previously failed to load."""
+        with self._cache_lock:
+            return url in self._failed
+
+    def is_pending(self, url: str) -> bool:
+        """Check if URL is currently being loaded."""
+        with self._cache_lock:
+            return url in self._pending
+
     def clear(self):
         """Clear all cached images."""
         with self._cache_lock:
             self._cache.clear()
+            self._failed.clear()
+            self._pending.clear()
 
 
 # Callbacks for image load completion
 ImageCallback = Callable[[Optional[skia.Image]], None]
 # Callback for raw bytes (used internally for thread-safe loading)
 BytesCallback = Callable[[Optional[bytes], str], None]
+
+
+def get_cached_image(url: str, base_url: Optional[str] = None) -> Optional[skia.Image]:
+    """
+    Get an image from cache if available (no loading).
+
+    Args:
+        url: Image URL or file path
+        base_url: Base URL for resolving relative URLs
+
+    Returns:
+        Cached Skia Image, or None if not in cache
+    """
+    full_url = _resolve_url(url, base_url)
+    cache = ImageCache()
+    return cache.get(full_url)
+
+
+def has_image_failed(url: str, base_url: Optional[str] = None) -> bool:
+    """
+    Check if an image URL previously failed to load.
+
+    Args:
+        url: Image URL or file path
+        base_url: Base URL for resolving relative URLs
+
+    Returns:
+        True if the URL failed to load previously
+    """
+    full_url = _resolve_url(url, base_url)
+    cache = ImageCache()
+    return cache.has_failed(full_url)
+
+
+def is_data_url(url: str) -> bool:
+    """Check if URL is a data: URL."""
+    return url.startswith('data:')
 
 
 def load_image(url: str, base_url: Optional[str] = None) -> Optional[skia.Image]:
@@ -89,6 +155,9 @@ def load_image(url: str, base_url: Optional[str] = None) -> Optional[skia.Image]
         # Decode with Skia
         image = skia.Image.MakeFromEncoded(data)
         if image:
+            # Convert to raster image for safe drawing
+            # (encoded images may crash on some operations)
+            image = image.makeRasterImage()
             cache.set(full_url, image)
             logger.debug(f"Loaded image: {full_url} ({image.width()}x{image.height()})")
 
@@ -162,6 +231,14 @@ def load_image_async(
             GLib.idle_add(lambda: on_complete(cached) or False)
         return -1  # No task needed
 
+    # Atomically check if failed/pending and mark as pending
+    # This prevents multiple concurrent loads of the same URL
+    if not cache.mark_pending(full_url):
+        logger.debug(f"Skipping image (cached/failed/pending): {full_url}")
+        if on_complete:
+            GLib.idle_add(lambda: on_complete(None) or False)
+        return -1
+
     def do_load_bytes():
         """Load raw bytes in background thread."""
         return _load_image_bytes(full_url)
@@ -169,6 +246,7 @@ def load_image_async(
     def on_bytes_loaded(data: Optional[bytes]):
         """Decode image on main thread and call user callback."""
         if data is None:
+            cache.mark_failed(full_url)
             if on_complete:
                 on_complete(None)
             return
@@ -177,22 +255,23 @@ def load_image_async(
             # Decode image on main thread (Skia thread safety)
             decoded = skia.Image.MakeFromEncoded(data)
             if decoded:
-                # Convert to raster image to ensure data is fully decoded
-                # This prevents potential lazy decoding issues during rendering
-                surface = skia.Surface(decoded.width(), decoded.height())
-                canvas = surface.getCanvas()
-                canvas.drawImage(decoded, 0, 0)
-                image = surface.makeImageSnapshot()
+                # Convert to raster image for safe drawing
+                # (encoded images may crash on some operations)
+                image = decoded.makeRasterImage()
 
                 cache.set(full_url, image)
                 logger.debug(f"Async loaded image: {full_url} ({image.width()}x{image.height()})")
                 if on_complete:
                     on_complete(image)
             else:
+                # Failed to decode (e.g., SVG or unsupported format)
+                logger.warning(f"Failed to decode image (unsupported format?): {full_url}")
+                cache.mark_failed(full_url)
                 if on_complete:
                     on_complete(None)
         except Exception as e:
             logger.error(f"Failed to decode image {full_url}: {e}")
+            cache.mark_failed(full_url)
             if on_complete:
                 on_complete(None)
             if on_complete:

@@ -99,12 +99,13 @@ def render_dom_graph_page(graph_path: str) -> str:
     Render the DOM graph visualization page.
 
     Args:
-        graph_path: Path to the SVG or DOT file
+        graph_path: Path to the PNG, SVG or DOT file
 
     Returns:
         Rendered HTML with embedded graph
     """
     from pathlib import Path
+    import base64
 
     logger = logging.getLogger("bowser.templates")
     graph_path_obj = Path(graph_path)
@@ -114,20 +115,31 @@ def render_dom_graph_page(graph_path: str) -> str:
         return render_template("dom_graph.html",
                              error="Graph file not found",
                              graph_content="",
-                             is_svg=False)
+                             is_svg=False,
+                             is_png=False)
 
     try:
         # Check file type
-        is_svg = graph_path_obj.suffix == '.svg'
+        suffix = graph_path_obj.suffix.lower()
+        is_svg = suffix == '.svg'
+        is_png = suffix == '.png'
 
-        # Read the file
-        with open(graph_path, 'r', encoding='utf-8') as f:
-            graph_content = f.read()
+        if is_png:
+            # Read PNG as binary and convert to base64 data URL
+            with open(graph_path, 'rb') as f:
+                png_data = f.read()
+            graph_content = base64.b64encode(png_data).decode('ascii')
+            logger.info(f"Rendering DOM graph (PNG) from {graph_path}")
+        else:
+            # Read text content for SVG or DOT
+            with open(graph_path, 'r', encoding='utf-8') as f:
+                graph_content = f.read()
+            logger.info(f"Rendering DOM graph from {graph_path}")
 
-        logger.info(f"Rendering DOM graph from {graph_path}")
         return render_template("dom_graph.html",
                              graph_content=graph_content,
                              is_svg=is_svg,
+                             is_png=is_png,
                              graph_path=str(graph_path),
                              error=None)
 
@@ -136,4 +148,5 @@ def render_dom_graph_page(graph_path: str) -> str:
         return render_template("dom_graph.html",
                              error=f"Failed to load graph: {e}",
                              graph_content="",
-                             is_svg=False)
+                             is_svg=False,
+                             is_png=False)

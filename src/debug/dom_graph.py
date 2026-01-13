@@ -149,6 +149,47 @@ def render_dom_graph_to_svg(document: Optional[Element], output_path: str) -> bo
         return False
 
 
+def render_dom_graph_to_png(document: Optional[Element], output_path: str) -> bool:
+    """
+    Render DOM tree as a PNG image using Graphviz (if available).
+
+    Args:
+        document: Root element of the DOM tree
+        output_path: Path where to save the .png file
+
+    Returns:
+        True if successful, False otherwise
+    """
+    logger = logging.getLogger("bowser.debug")
+
+    try:
+        import subprocess
+
+        dot_content = generate_dot_graph(document)
+
+        # Try to render with graphviz
+        result = subprocess.run(
+            ['dot', '-Tpng', '-o', output_path],
+            input=dot_content.encode('utf-8'),
+            capture_output=True,
+            timeout=10
+        )
+
+        if result.returncode == 0:
+            logger.info(f"DOM graph rendered to {output_path}")
+            return True
+        else:
+            logger.warning(f"Graphviz rendering failed: {result.stderr.decode()}")
+            return False
+
+    except FileNotFoundError:
+        logger.warning("Graphviz 'dot' command not found. Install graphviz for PNG output.")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to render DOM graph: {e}")
+        return False
+
+
 def print_dom_tree(node, indent: int = 0, max_depth: int = 10) -> str:
     """
     Generate a text representation of the DOM tree.

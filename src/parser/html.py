@@ -49,6 +49,12 @@ def print_tree(node, indent=0):
 class _DOMBuilder(HTMLParser):
     """Tiny HTML parser that produces Element/Text nodes."""
 
+    # HTML5 void elements - elements that cannot have children
+    VOID_ELEMENTS = frozenset({
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr"
+    })
+
     def __init__(self):
         super().__init__(convert_charrefs=False)
         self.root = Element("html")
@@ -134,7 +140,13 @@ class _DOMBuilder(HTMLParser):
         if tag == "p" and self.current.tag == "p":
             self._pop("p")
 
-        self._push(el)
+        # For void elements, add to tree but don't push onto stack
+        # (they can't have children and don't have closing tags)
+        if tag in self.VOID_ELEMENTS:
+            el.parent = self.current
+            self.current.children.append(el)
+        else:
+            self._push(el)
 
     def handle_endtag(self, tag):
         if tag in {"script"}:

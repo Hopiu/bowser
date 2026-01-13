@@ -240,7 +240,24 @@ class DocumentLayout:
                 if tag == "img":
                     image_layout = ImageLayout(child)
                     image_layout.load(self.base_url, async_load=self.async_images)
-                    image_layout.layout(max_width=self.width - 40 if self.width > 40 else 800)
+
+                    # Get computed style for max-width constraint
+                    style = getattr(child, "computed_style", None)
+                    max_width_css = None
+                    if style:
+                        max_width_val = style.get("max-width", "")
+                        if max_width_val == "100%":
+                            # 100% means constrain to container width
+                            max_width_css = self.width - 40 if self.width > 40 else 800
+                        elif max_width_val.endswith("px"):
+                            try:
+                                max_width_css = float(max_width_val[:-2])
+                            except ValueError:
+                                pass
+
+                    # Use CSS max-width or default container width
+                    effective_max_width = max_width_css if max_width_css else (self.width - 40 if self.width > 40 else 800)
+                    image_layout.layout(max_width=effective_max_width)
 
                     # Get computed style for margins
                     style = getattr(child, "computed_style", None)
@@ -439,7 +456,24 @@ class DocumentLayout:
                 if child.tag.lower() == "img":
                     image_layout = ImageLayout(child)
                     image_layout.load(self.base_url, async_load=self.async_images)
-                    image_layout.layout(max_width=self.width - 40 if self.width > 40 else 800)
+
+                    # Get computed style for max-width constraint
+                    style = getattr(child, "computed_style", None)
+                    max_width_css = None
+                    if style:
+                        max_width_val = style.get("max-width", "")
+                        if max_width_val == "100%":
+                            # 100% means constrain to container width
+                            max_width_css = self.width - 40 if self.width > 40 else 800
+                        elif max_width_val.endswith("px"):
+                            try:
+                                max_width_css = float(max_width_val[:-2])
+                            except ValueError:
+                                pass
+
+                    # Use CSS max-width or default container width
+                    effective_max_width = max_width_css if max_width_css else (self.width - 40 if self.width > 40 else 800)
+                    image_layout.layout(max_width=effective_max_width)
 
                     style = getattr(child, "computed_style", None)
                     if style:

@@ -942,7 +942,7 @@ class Chrome:
 
     def _show_dom_graph(self):
         """Generate and display DOM graph for current tab."""
-        from ..debug.dom_graph import render_dom_graph_to_svg, save_dom_graph, print_dom_tree
+        from ..debug.dom_graph import render_dom_graph_to_png, save_dom_graph, print_dom_tree
 
         if not self.browser.active_tab:
             self.logger.warning("No active tab to visualize")
@@ -957,8 +957,8 @@ class Chrome:
         output_dir = Path.home() / ".cache" / "bowser"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Try SVG first, fallback to DOT
-        svg_path = output_dir / "dom_graph.svg"
+        # Try PNG first, fallback to DOT
+        png_path = output_dir / "dom_graph.png"
         dot_path = output_dir / "dom_graph.dot"
 
         self.logger.info("Generating DOM graph...")
@@ -971,11 +971,11 @@ class Chrome:
         print(tree_text)
         print("="*60 + "\n")
 
-        # Try to render as SVG
-        if render_dom_graph_to_svg(frame.document, str(svg_path)):
+        # Try to render as PNG
+        if render_dom_graph_to_png(frame.document, str(png_path)):
             # Open in new browser tab
-            self.logger.info(f"Opening DOM graph in new tab: {svg_path}")
-            self.browser.new_tab(f"about:dom-graph?path={svg_path}")
+            self.logger.info(f"Opening DOM graph in new tab: {png_path}")
+            self.browser.new_tab(f"about:dom-graph?path={png_path}")
         else:
             # Fallback to DOT file
             if save_dom_graph(frame.document, str(dot_path)):

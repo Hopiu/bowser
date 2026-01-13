@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Callable
 import skia
 
-from ..network.images import load_image, load_image_async
+from ..network.images import load_image, load_image_async, get_cached_image, is_data_url, has_image_failed
 
 
 logger = logging.getLogger("bowser.layout.embed")
@@ -36,6 +36,7 @@ class ImageLayout:
         self._load_task_id: Optional[int] = None
         self._src = ""
         self._base_url: Optional[str] = None
+        self._max_width: Optional[float] = None  # Store max_width for async re-layout
 
     def load(self, base_url: Optional[str] = None, async_load: bool = False):
         """
@@ -58,10 +59,26 @@ class ImageLayout:
         self._src = src
         self._base_url = base_url
 
+        # Check cache first (fast, non-blocking)
+        cached = get_cached_image(src, base_url)
+        if cached:
+            self.image = cached
+            return
+
+        # Skip images that previously failed to load (e.g., SVG)
+        if has_image_failed(src, base_url):
+            return
+
+        # Data URLs should be loaded synchronously (they're inline, no network)
+        if is_data_url(src):
+            self.image = load_image(src, base_url)
+            return
+
         if async_load:
+            # Load in background thread
             self._load_async(src, base_url)
         else:
-            # Synchronous load (for tests or cached images)
+            # Synchronous load (blocks UI - use sparingly)
             self.image = load_image(src, base_url)
 
     def _load_async(self, src: str, base_url: Optional[str]):
@@ -99,7 +116,6 @@ class ImageLayout:
 
         # Calculate dimensions based on attributes or intrinsic size
         if width_attr and height_attr:
-            # Both specified - use them
             try:
                 self.width = float(width_attr)
                 self.height = float(height_attr)
@@ -107,7 +123,6 @@ class ImageLayout:
                 self.width = intrinsic_width
                 self.height = intrinsic_height
         elif width_attr:
-            # Only width specified - maintain aspect ratio
             try:
                 self.width = float(width_attr)
                 if intrinsic_width > 0:
@@ -119,7 +134,6 @@ class ImageLayout:
                 self.width = intrinsic_width
                 self.height = intrinsic_height
         elif height_attr:
-            # Only height specified - maintain aspect ratio
             try:
                 self.height = float(height_attr)
                 if intrinsic_height > 0:
@@ -131,9 +145,14 @@ class ImageLayout:
                 self.width = intrinsic_width
                 self.height = intrinsic_height
         else:
-            # No explicit dimensions - use intrinsic size
             self.width = intrinsic_width
             self.height = intrinsic_height
+
+        # Apply max_width constraint if set
+        if self._max_width and self.width > self._max_width:
+            aspect_ratio = intrinsic_height / intrinsic_width if intrinsic_width > 0 else 1
+            self.width = self._max_width
+            self.height = self.width * aspect_ratio
 
     @property
     def is_loading(self) -> bool:
@@ -155,6 +174,9 @@ class ImageLayout:
         Returns:
             Width of the image (for inline layout)
         """
+        # Store max_width for async image load re-layout
+        self._max_width = max_width
+
         if not self.image:
             # If image failed to load, use alt text dimensions
             # For now, just use a placeholder size
@@ -208,11 +230,11 @@ class ImageLayout:
             self.width = intrinsic_width
             self.height = intrinsic_height
 
-            # Constrain to max_width if specified
-            if max_width and self.width > max_width:
-                aspect_ratio = intrinsic_height / intrinsic_width if intrinsic_width > 0 else 1
-                self.width = max_width
-                self.height = self.width * aspect_ratio
+        # Always constrain to max_width if specified (applies to all cases)
+        if max_width and self.width > max_width:
+            aspect_ratio = intrinsic_height / intrinsic_width if intrinsic_width > 0 else 1
+            self.width = max_width
+            self.height = self.width * aspect_ratio
 
         return self.width
 

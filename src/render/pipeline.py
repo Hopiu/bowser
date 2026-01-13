@@ -39,6 +39,8 @@ class RenderPipeline:
 
         # Also set on ImageLayout class for global notification
         def on_image_loaded():
+            # Invalidate layout cache so positions are recalculated with actual image sizes
+            self.invalidate()
             if self._on_needs_redraw:
                 self._on_needs_redraw()
 
