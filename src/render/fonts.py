@@ -23,7 +23,7 @@ class FontCache:
     """Cache for Skia fonts and typefaces."""
 
     _instance = None
-    
+
     # Common emoji/symbol fonts to try as last resort before showing tofu
     _EMOJI_FALLBACK_FONTS = (
         'Noto Color Emoji',
@@ -51,7 +51,7 @@ class FontCache:
         # This dramatically reduces cache entries and font lookups
         is_emoji = text and self._is_emoji_char(text[0])
         cache_key = (families, is_emoji)
-        
+
         if cache_key in self._typeface_cache:
             return self._typeface_cache[cache_key]
 
@@ -60,7 +60,7 @@ class FontCache:
             # Skip generic families that won't resolve to specific fonts
             if family.lower() in ('serif', 'sans-serif', 'monospace', 'cursive', 'fantasy'):
                 continue
-                
+
             typeface = skia.Typeface.MakeFromName(family, skia.FontStyle.Normal())
             if typeface and typeface.getFamilyName() == family:
                 # Font was actually found - check if it has glyphs for sample text

@@ -60,7 +60,7 @@ class TestParseHTML:
             if hasattr(child, "tag") and child.tag == "style":
                 style_elem = child
                 break
-        
+
         assert style_elem is not None
         # Style content should be in the element
         joined = " ".join(collect_text(style_elem))

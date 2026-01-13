@@ -22,26 +22,26 @@ class RenderPipeline:
         # Paint cache
         self._text_paint: Optional[skia.Paint] = None
         self._display_list: Optional[DisplayList] = None
-        
+
         # Base URL for resolving relative paths
         self.base_url: Optional[str] = None
 
         # Debug mode
         self.debug_mode = False
-        
+
         # Async image loading
         self.async_images = True  # Enable async image loading by default
         self._on_needs_redraw: Optional[Callable[[], None]] = None
-    
+
     def set_redraw_callback(self, callback: Callable[[], None]):
         """Set a callback to be called when async images finish loading."""
         self._on_needs_redraw = callback
-        
+
         # Also set on ImageLayout class for global notification
         def on_image_loaded():
             if self._on_needs_redraw:
                 self._on_needs_redraw()
-        
+
         ImageLayout._on_any_image_loaded = on_image_loaded
 
     def layout(self, document: Element, width: int) -> DocumentLayout:
@@ -60,7 +60,7 @@ class RenderPipeline:
 
         # Build new layout with base_url for resolving image paths
         self._layout = DocumentLayout(
-            document, 
+            document,
             base_url=self.base_url,
             async_images=self.async_images
         )
@@ -110,7 +110,25 @@ class RenderPipeline:
                 continue
 
             font = get_font(line.font_size, getattr(line, "font_family", ""), text=line.text)
-            canvas.drawString(line.text, line.x, baseline_y, font, self._text_paint)
+
+            # Use line color if specified (for links), otherwise black
+            paint = skia.Paint()
+            paint.setAntiAlias(True)
+            if line.color:
+                paint.setColor(self._parse_color(line.color))
+            else:
+                paint.setColor(skia.ColorBLACK)
+
+            canvas.drawString(line.text, line.x, baseline_y, font, paint)
+
+            # Draw underline for links
+            if line.href:
+                underline_paint = skia.Paint()
+                underline_paint.setColor(paint.getColor())
+                underline_paint.setStyle(skia.Paint.kStroke_Style)
+                underline_paint.setStrokeWidth(1)
+                underline_y = baseline_y + 2
+                canvas.drawLine(line.x, underline_y, line.x + line.width, underline_y, underline_paint)
 
         # Render visible images (both loaded and placeholder)
         for layout_image in layout.images:
@@ -122,12 +140,12 @@ class RenderPipeline:
             # Use image_layout dimensions directly for accurate sizing after async load
             img_width = image_layout.width if image_layout.width > 0 else layout_image.width
             img_height = image_layout.height if image_layout.height > 0 else layout_image.height
-            
+
             # Always create DrawImage command - it handles None images as placeholders
             draw_cmd = DrawImage(
-                layout_image.x, 
+                layout_image.x,
                 layout_image.y,
-                img_width, 
+                img_width,
                 img_height,
                 image_layout.image,  # May be None, DrawImage handles this
                 image_layout.alt_text
@@ -188,8 +206,8 @@ class RenderPipeline:
 
     def get_text_layout(self) -> list:
         """
-        Get the text layout for text selection.
-        Returns list of line info dicts with char_positions.
+        Get the text layout for text selection and link hit testing.
+        Returns list of line info dicts with char_positions and href.
         """
         if self._layout is None:
             return []
@@ -203,7 +221,8 @@ class RenderPipeline:
                 "width": line.width,
                 "height": line.height,
                 "font_size": line.font_size,
-                "char_positions": line.char_positions
+                "char_positions": line.char_positions,
+                "href": getattr(line, "href", None)
             })
         return result
 
@@ -218,3 +237,63 @@ class RenderPipeline:
         self._layout = None
         self._layout_doc_id = None
         self._display_list = None
+
+    def _parse_color(self, color_str: str) -> int:
+        """Parse a CSS color string to a Skia color value.
+
+        Supports:
+        - Hex colors: #rgb, #rrggbb
+        - Named colors (limited set)
+
+        Note: Very light colors (like white) that would be invisible on
+        our white background are converted to black.
+        """
+        if not color_str:
+            return skia.ColorBLACK
+
+        color_str = color_str.strip().lower()
+
+        # Named colors
+        named_colors = {
+            "black": skia.ColorBLACK,
+            "white": skia.ColorBLACK,  # White is invisible on white bg, use black
+            "red": skia.ColorRED,
+            "green": skia.ColorGREEN,
+            "blue": skia.ColorBLUE,
+            "yellow": skia.ColorYELLOW,
+            "cyan": skia.ColorCYAN,
+            "magenta": skia.ColorMAGENTA,
+            "gray": skia.ColorGRAY,
+            "grey": skia.ColorGRAY,
+        }
+
+        if color_str in named_colors:
+            return named_colors[color_str]
+
+        # Hex colors
+        if color_str.startswith("#"):
+            hex_str = color_str[1:]
+            try:
+                if len(hex_str) == 3:
+                    # #rgb -> #rrggbb
+                    r = int(hex_str[0] * 2, 16)
+                    g = int(hex_str[1] * 2, 16)
+                    b = int(hex_str[2] * 2, 16)
+                elif len(hex_str) == 6:
+                    r = int(hex_str[0:2], 16)
+                    g = int(hex_str[2:4], 16)
+                    b = int(hex_str[4:6], 16)
+                else:
+                    return skia.ColorBLACK
+
+                # Check if color is too light (would be invisible on white)
+                # Use relative luminance approximation
+                if r > 240 and g > 240 and b > 240:
+                    return skia.ColorBLACK
+
+                return skia.Color(r, g, b, 255)
+            except ValueError:
+                pass
+
+        # Fallback to black
+        return skia.ColorBLACK

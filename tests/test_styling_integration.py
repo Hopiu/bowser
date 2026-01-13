@@ -1,13 +1,13 @@
 """Integration tests for CSS styling system."""
 
 import pytest
-from src.parser.html import parse_html_with_styles, Element
+from src.parser.html import parse_html_with_styles
 from src.layout.document import DocumentLayout
 
 
 class TestStyleIntegration:
     """Test end-to-end CSS parsing and layout integration."""
-    
+
     def test_parse_with_style_tag(self):
         html = """
         <html>
@@ -22,7 +22,7 @@ class TestStyleIntegration:
         </html>
         """
         root = parse_html_with_styles(html)
-        
+
         # Find the p element
         p_elem = None
         for child in root.children:
@@ -31,12 +31,12 @@ class TestStyleIntegration:
                     if hasattr(grandchild, "tag") and grandchild.tag == "p":
                         p_elem = grandchild
                         break
-        
+
         assert p_elem is not None
         assert hasattr(p_elem, "computed_style")
         assert p_elem.computed_style.get("color") == "red"
         assert p_elem.computed_style.get("font-size") == "18px"
-    
+
     def test_inline_style_override(self):
         html = """
         <html>
@@ -46,7 +46,7 @@ class TestStyleIntegration:
         </html>
         """
         root = parse_html_with_styles(html)
-        
+
         # Find the p element
         for child in root.children:
             if hasattr(child, "tag") and child.tag == "body":
@@ -56,9 +56,9 @@ class TestStyleIntegration:
                         assert p_elem.computed_style.get("color") == "blue"
                         assert p_elem.computed_style.get("font-size") == "20px"
                         return
-        
+
         pytest.fail("P element not found")
-    
+
     def test_cascade_priority(self):
         html = """
         <html>
@@ -78,24 +78,24 @@ class TestStyleIntegration:
         </html>
         """
         root = parse_html_with_styles(html)
-        
+
         # Find body
         body = None
         for child in root.children:
             if hasattr(child, "tag") and child.tag == "body":
                 body = child
                 break
-        
+
         assert body is not None
         paragraphs = [c for c in body.children if hasattr(c, "tag") and c.tag == "p"]
         assert len(paragraphs) == 4
-        
+
         # Check cascade
         assert paragraphs[0].computed_style.get("color") == "red"  # Tag only
         assert paragraphs[1].computed_style.get("color") == "green"  # Class wins
         assert paragraphs[2].computed_style.get("color") == "blue"  # ID wins
         assert paragraphs[3].computed_style.get("color") == "purple"  # Inline wins
-    
+
     def test_inheritance(self):
         html = """
         <html>
@@ -112,7 +112,7 @@ class TestStyleIntegration:
         </html>
         """
         root = parse_html_with_styles(html)
-        
+
         # Find the nested p element
         for child in root.children:
             if hasattr(child, "tag") and child.tag == "body":
@@ -150,10 +150,10 @@ class TestStyleIntegration:
         lines = layout.layout(800)
         # H1 should use custom font size
         assert lines[0].font_size == 40
-        
+
         # P should use custom font size
         assert lines[1].font_size == 20
-    
+
     def test_multiple_classes(self):
         html = """
         <html>
@@ -169,7 +169,7 @@ class TestStyleIntegration:
         </html>
         """
         root = parse_html_with_styles(html)
-        
+
         # Find the p element
         for child in root.children:
             if hasattr(child, "tag") and child.tag == "body":
@@ -179,9 +179,9 @@ class TestStyleIntegration:
                         assert grandchild.computed_style.get("font-size") == "24px"
                         assert grandchild.computed_style.get("color") == "red"
                         return
-        
+
         pytest.fail("P element not found")
-    
+
     def test_default_styles_applied(self):
         html = """
         <html>
@@ -193,20 +193,20 @@ class TestStyleIntegration:
         </html>
         """
         root = parse_html_with_styles(html)
-        
+
         # Find elements
         body = None
         for child in root.children:
             if hasattr(child, "tag") and child.tag == "body":
                 body = child
                 break
-        
+
         assert body is not None
-        
+
         h1 = next((c for c in body.children if hasattr(c, "tag") and c.tag == "h1"), None)
         p = next((c for c in body.children if hasattr(c, "tag") and c.tag == "p"), None)
         a = next((c for c in body.children if hasattr(c, "tag") and c.tag == "a"), None)
-        
+
         # Check default styles from default.css
         assert h1 is not None
         # Font-size from default.css is 2.5rem
@@ -220,7 +220,7 @@ class TestStyleIntegration:
         # Link color from default.css
         assert a.computed_style.get("color") == "#0066cc"
         assert a.computed_style.get("text-decoration") == "none"
-    
+
     def test_no_styles_when_disabled(self):
         html = """
         <html>
@@ -235,7 +235,7 @@ class TestStyleIntegration:
         </html>
         """
         root = parse_html_with_styles(html, apply_styles=False)
-        
+
         # Find the p element
         for child in root.children:
             if hasattr(child, "tag") and child.tag == "body":
@@ -244,5 +244,5 @@ class TestStyleIntegration:
                         # Should not have computed_style when disabled
                         assert not hasattr(grandchild, "computed_style")
                         return
-        
+
         pytest.fail("P element not found")

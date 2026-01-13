@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Callable
 import skia
 
-from ..network.images import load_image, load_image_async, ImageCache
+from ..network.images import load_image, load_image_async
 
 
 logger = logging.getLogger("bowser.layout.embed")
@@ -16,10 +16,10 @@ OnImageLoadedCallback = Callable[["ImageLayout"], None]
 
 class ImageLayout:
     """Layout for an <img> element."""
-    
+
     # Global callback for image load completion (set by render pipeline)
     _on_any_image_loaded: Optional[Callable[[], None]] = None
-    
+
     def __init__(self, node, parent=None, previous=None, frame=None):
         self.node = node
         self.parent = parent
@@ -36,38 +36,38 @@ class ImageLayout:
         self._load_task_id: Optional[int] = None
         self._src = ""
         self._base_url: Optional[str] = None
-        
+
     def load(self, base_url: Optional[str] = None, async_load: bool = False):
         """
         Load the image from the src attribute.
-        
+
         Args:
             base_url: Base URL for resolving relative paths
             async_load: If True, load in background thread (non-blocking)
         """
         if not hasattr(self.node, 'attributes'):
             return
-            
+
         src = self.node.attributes.get('src', '')
         if not src:
             logger.warning("Image element has no src attribute")
             return
-        
+
         # Get alt text
         self.alt_text = self.node.attributes.get('alt', '')
         self._src = src
         self._base_url = base_url
-        
+
         if async_load:
             self._load_async(src, base_url)
         else:
             # Synchronous load (for tests or cached images)
             self.image = load_image(src, base_url)
-    
+
     def _load_async(self, src: str, base_url: Optional[str]):
         """Load image asynchronously."""
         self._loading = True
-        
+
         def on_complete(image: Optional[skia.Image]):
             self._loading = False
             self.image = image
@@ -78,25 +78,25 @@ class ImageLayout:
             # Trigger re-render
             if ImageLayout._on_any_image_loaded:
                 ImageLayout._on_any_image_loaded()
-        
+
         def on_error(e: Exception):
             self._loading = False
             logger.error(f"Async image load failed: {src}: {e}")
-        
+
         self._load_task_id = load_image_async(src, base_url, on_complete, on_error)
-    
+
     def _update_dimensions(self):
         """Update dimensions based on loaded image."""
         if not self.image:
             return
-            
+
         # Get explicit width/height attributes
         width_attr = self.node.attributes.get('width', '') if hasattr(self.node, 'attributes') else ''
         height_attr = self.node.attributes.get('height', '') if hasattr(self.node, 'attributes') else ''
-        
+
         intrinsic_width = self.image.width()
         intrinsic_height = self.image.height()
-        
+
         # Calculate dimensions based on attributes or intrinsic size
         if width_attr and height_attr:
             # Both specified - use them
@@ -134,12 +134,12 @@ class ImageLayout:
             # No explicit dimensions - use intrinsic size
             self.width = intrinsic_width
             self.height = intrinsic_height
-    
+
     @property
     def is_loading(self) -> bool:
         """True if image is currently being loaded."""
         return self._loading
-    
+
     def cancel_load(self):
         """Cancel any pending async load."""
         if self._load_task_id is not None:
@@ -147,11 +147,11 @@ class ImageLayout:
             cancel_task(self._load_task_id)
             self._load_task_id = None
             self._loading = False
-        
+
     def layout(self, max_width: Optional[float] = None):
         """
         Calculate the layout dimensions for this image.
-        
+
         Returns:
             Width of the image (for inline layout)
         """
@@ -161,15 +161,15 @@ class ImageLayout:
             self.width = 100
             self.height = 100
             return self.width
-        
+
         # Get explicit width/height attributes
         width_attr = self.node.attributes.get('width', '') if hasattr(self.node, 'attributes') else ''
         height_attr = self.node.attributes.get('height', '') if hasattr(self.node, 'attributes') else ''
-        
+
         # Get intrinsic dimensions
         intrinsic_width = self.image.width()
         intrinsic_height = self.image.height()
-        
+
         # Calculate display dimensions
         if width_attr and height_attr:
             # Both specified
@@ -207,13 +207,13 @@ class ImageLayout:
             # No dimensions specified - use intrinsic size
             self.width = intrinsic_width
             self.height = intrinsic_height
-            
+
             # Constrain to max_width if specified
             if max_width and self.width > max_width:
                 aspect_ratio = intrinsic_height / intrinsic_width if intrinsic_width > 0 else 1
                 self.width = max_width
                 self.height = self.width * aspect_ratio
-        
+
         return self.width
 
 

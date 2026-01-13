@@ -180,7 +180,7 @@ class CSSParser:
 
         # Split multi-selectors by comma
         selector_parts = [s.strip() for s in selector_text.split(',') if s.strip()]
-        
+
         if len(selector_parts) == 1:
             # Single selector
             return CSSRule(Selector(selector_text), declarations)

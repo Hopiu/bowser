@@ -8,12 +8,15 @@ from .embed import ImageLayout
 class LayoutLine:
     """A laid-out line ready for rendering."""
 
-    def __init__(self, text: str, x: float, y: float, font_size: int, char_positions: list = None, font_family: str = ""):
+    def __init__(self, text: str, x: float, y: float, font_size: int,
+                char_positions: list = None, font_family: str = "", color: str = None, href: str = None):
         self.text = text
         self.x = x
         self.y = y  # Top of line
         self.font_size = font_size
         self.font_family = font_family
+        self.color = color  # Text color (e.g., "#0066cc" for links)
+        self.href = href  # Link target URL if this is a link
         self.height = linespace(font_size)
         self.width = 0
         self.char_positions = char_positions or []
@@ -34,12 +37,12 @@ class LayoutImage:
         # Store initial dimensions but also provide dynamic access
         self._initial_width = image_layout.width
         self._initial_height = image_layout.height
-    
+
     @property
     def width(self) -> float:
         """Get current width (may update after async image load)."""
         return self.image_layout.width if self.image_layout.width > 0 else self._initial_width
-    
+
     @property
     def height(self) -> float:
         """Get current height (may update after async image load)."""
@@ -104,18 +107,18 @@ class DocumentLayout:
                     margin_top = block_info.get("margin_top", 6)
                     margin_bottom = block_info.get("margin_bottom", 10)
                     y += margin_top
-                    
+
                     # Position the image
                     image_layout.x = x_margin
                     image_layout.y = y
-                    
+
                     # Add to images list for rendering
                     layout_image = LayoutImage(image_layout, x_margin, y)
                     self.images.append(layout_image)
-                    
+
                     y += image_layout.height + margin_bottom
                 continue
-            
+
             font_size = block_info.get("font_size", 14)
             font_family = block_info.get("font_family", "")
             text = block_info.get("text", "")
@@ -123,6 +126,8 @@ class DocumentLayout:
             margin_bottom = block_info.get("margin_bottom", 10)
             block_type = block_info.get("block_type", "block")
             tag = block_info.get("tag", "")
+            color = block_info.get("color")  # Text color from style
+            href = block_info.get("href")  # Link target URL
 
             if not text:
                 y += font_size * 0.6
@@ -172,7 +177,9 @@ class DocumentLayout:
                     y=y,  # Top of line, baseline is y + font_size
                     font_size=font_size,
                     char_positions=char_positions,
-                    font_family=font_family
+                    font_family=font_family,
+                    color=color,
+                    href=href
                 )
 
                 layout_block.lines.append(layout_line)
@@ -228,13 +235,13 @@ class DocumentLayout:
                 # Skip style and script tags - they shouldn't be rendered
                 if tag in {"style", "script", "head", "title", "meta", "link"}:
                     continue
-                
+
                 # Handle img tags
                 if tag == "img":
                     image_layout = ImageLayout(child)
                     image_layout.load(self.base_url, async_load=self.async_images)
                     image_layout.layout(max_width=self.width - 40 if self.width > 40 else 800)
-                    
+
                     # Get computed style for margins
                     style = getattr(child, "computed_style", None)
                     if style:
@@ -243,7 +250,7 @@ class DocumentLayout:
                     else:
                         margin_top = 6
                         margin_bottom = 10
-                    
+
                     blocks.append({
                         "is_image": True,
                         "image_layout": image_layout,
@@ -257,10 +264,57 @@ class DocumentLayout:
                     blocks.extend(self._collect_blocks(child))
                     continue
 
-                # For other elements (p, h1, etc), first collect any embedded images
+                # Inline elements inside block elements are handled by _text_of
+                # Only create separate blocks for inline elements if they're direct
+                # children of container elements (handled above via recursion)
+                if tag in {"span", "strong", "em", "b", "i", "code"}:
+                    # Skip - these are handled as part of parent's text
+                    continue
+
+                # Handle anchor elements - they can be inline or standalone
+                if tag == "a":
+                    # Get the href and treat this as a clickable block
+                    href = child.attributes.get("href")
+                    content = self._text_of(child)
+                    if not content:
+                        continue
+
+                    style = getattr(child, "computed_style", None)
+                    if style:
+                        font_size = style.get_int("font-size", 14)
+                        color = style.get("color")
+                        font_family = style.get("font-family", "")
+                    else:
+                        font_size = 14
+                        color = None
+                        font_family = ""
+
+                    # Default link color
+                    if not color:
+                        color = "#0066cc"
+
+                    blocks.append({
+                        "text": content,
+                        "font_size": font_size,
+                        "font_family": font_family,
+                        "margin_top": 0,
+                        "margin_bottom": 0,
+                        "block_type": "inline",
+                        "tag": tag,
+                        "bullet": False,
+                        "style": style,
+                        "color": color,
+                        "href": href
+                    })
+                    continue
+
+                # For block elements (p, h1, etc), first collect any embedded images
                 embedded_images = self._collect_images(child)
                 blocks.extend(embedded_images)
-                
+
+                # Check if this element contains only a link
+                link_info = self._extract_single_link(child)
+
                 content = self._text_of(child)
                 if not content:
                     continue
@@ -275,6 +329,7 @@ class DocumentLayout:
                     margin_bottom = style.get_int("margin-bottom", 10)
                     display = style.get("display", "block")
                     font_family = style.get("font-family", "")
+                    color = style.get("color")  # Get text color from style
                 else:
                     # Fallback to hardcoded defaults
                     font_size = self._get_default_font_size(tag)
@@ -282,6 +337,14 @@ class DocumentLayout:
                     margin_bottom = self._get_default_margin_bottom(tag)
                     display = "inline" if tag in {"span", "a", "strong", "em", "b", "i", "code"} else "block"
                     font_family = ""
+                    color = None
+
+                # If block contains only a link, use link info for href and color
+                href = None
+                if link_info:
+                    href = link_info.get("href")
+                    if not color:
+                        color = link_info.get("color", "#0066cc")
 
                 # Determine block type
                 block_type = "inline" if display == "inline" else "block"
@@ -300,7 +363,9 @@ class DocumentLayout:
                     "block_type": block_type,
                     "tag": tag,
                     "bullet": bullet,
-                    "style": style
+                    "style": style,
+                    "color": color,
+                    "href": href
                 })
 
         return blocks
@@ -326,20 +391,56 @@ class DocumentLayout:
         }
         return margins.get(tag, 0)
 
+    def _extract_single_link(self, node) -> dict | None:
+        """Extract link info if node contains only a single link.
+
+        Returns dict with href and color if the element contains only
+        a link (possibly with some whitespace text), None otherwise.
+        """
+        if not isinstance(node, Element):
+            return None
+
+        links = []
+        has_other_content = False
+
+        for child in node.children:
+            if isinstance(child, Text):
+                # Whitespace-only text is okay
+                if child.text.strip():
+                    has_other_content = True
+            elif isinstance(child, Element):
+                if child.tag.lower() == "a":
+                    links.append(child)
+                else:
+                    # Has other elements besides links
+                    has_other_content = True
+
+        # Return link info only if there's exactly one link and no other content
+        if len(links) == 1 and not has_other_content:
+            link = links[0]
+            style = getattr(link, "computed_style", None)
+            color = style.get("color") if style else None
+            return {
+                "href": link.attributes.get("href"),
+                "color": color or "#0066cc"
+            }
+
+        return None
+
     def _collect_images(self, node) -> list:
         """Recursively collect all img elements from a node."""
         images = []
-        
+
         if not isinstance(node, Element):
             return images
-        
+
         for child in getattr(node, "children", []):
             if isinstance(child, Element):
                 if child.tag.lower() == "img":
                     image_layout = ImageLayout(child)
                     image_layout.load(self.base_url, async_load=self.async_images)
                     image_layout.layout(max_width=self.width - 40 if self.width > 40 else 800)
-                    
+
                     style = getattr(child, "computed_style", None)
                     if style:
                         margin_top = style.get_int("margin-top", 6)
@@ -347,7 +448,7 @@ class DocumentLayout:
                     else:
                         margin_top = 6
                         margin_bottom = 10
-                    
+
                     images.append({
                         "is_image": True,
                         "image_layout": image_layout,
@@ -357,9 +458,9 @@ class DocumentLayout:
                 else:
                     # Recurse into children
                     images.extend(self._collect_images(child))
-        
+
         return images
-    
+
     def _text_of(self, node) -> str:
         """Extract text content from a node."""
         if isinstance(node, Text):

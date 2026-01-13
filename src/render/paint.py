@@ -61,7 +61,7 @@ class DrawRect(PaintCommand):
 class DrawImage(PaintCommand):
     """Command to draw an image."""
 
-    def __init__(self, x: float, y: float, width: float, height: float, 
+    def __init__(self, x: float, y: float, width: float, height: float,
                  image: skia.Image, alt_text: str = ""):
         super().__init__((x, y, x + width, y + height))
         self.x = x
@@ -82,11 +82,11 @@ class DrawImage(PaintCommand):
                 if paint is None:
                     paint = skia.Paint()
                     paint.setAntiAlias(True)
-                
+
                 # Calculate scale factor
                 scale_x = self.width / self.image.width()
                 scale_y = self.height / self.image.height()
-                
+
                 # Use canvas transform for scaling
                 canvas.save()
                 canvas.translate(self.x, self.y)
@@ -99,7 +99,7 @@ class DrawImage(PaintCommand):
                 logger.error(f"Failed to draw image: {e}")
                 # If drawing fails, fall back to placeholder
                 self._draw_placeholder(canvas, paint)
-    
+
     def _draw_placeholder(self, canvas: skia.Canvas, paint: skia.Paint = None):
         """Draw a placeholder for a missing or failed image."""
         if paint is None:
@@ -108,14 +108,14 @@ class DrawImage(PaintCommand):
             paint.setStyle(skia.Paint.kFill_Style)
         rect = skia.Rect.MakeLTRB(self.x, self.y, self.x + self.width, self.y + self.height)
         canvas.drawRect(rect, paint)
-        
+
         # Draw border
         border_paint = skia.Paint()
         border_paint.setColor(skia.ColorGRAY)
         border_paint.setStyle(skia.Paint.kStroke_Style)
         border_paint.setStrokeWidth(1)
         canvas.drawRect(rect, border_paint)
-        
+
         # Draw alt text if available
         if self.alt_text:
             text_paint = skia.Paint()

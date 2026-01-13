@@ -149,7 +149,7 @@ class Chrome:
         self.drawing_area.set_can_focus(True)  # Allow focus for keyboard events
         self.drawing_area.set_focusable(True)
         content_box.append(self.drawing_area)
-        
+
         # Set up redraw callback for async image loading
         self.render_pipeline.set_redraw_callback(self._request_redraw)
 
@@ -412,7 +412,7 @@ class Chrome:
 
         # Sync debug mode with render pipeline
         self.render_pipeline.debug_mode = self.debug_mode
-        
+
         # Set base URL for resolving relative image paths
         if self.browser.active_tab and self.browser.active_tab.current_url:
             self.render_pipeline.base_url = str(self.browser.active_tab.current_url)
@@ -561,7 +561,7 @@ class Chrome:
         """Trigger redraw of the drawing area."""
         if self.drawing_area and self.window:
             self.drawing_area.queue_draw()
-    
+
     def _request_redraw(self):
         """Request a redraw, called when async images finish loading."""
         # This is called from the main thread via GLib.idle_add
@@ -736,17 +736,78 @@ class Chrome:
         self.drawing_area.grab_focus()
 
     def _on_mouse_released(self, gesture, n_press, x, y):
-        """Handle mouse button release for text selection."""
+        """Handle mouse button release for text selection or link clicks."""
+        click_x = x
+        click_y = y + self.scroll_y
+
         if self.is_selecting:
-            self.selection_end = (x, y + self.scroll_y)
+            self.selection_end = (click_x, click_y)
             self.is_selecting = False
-            # Extract selected text
+
+            # Check if this is a click (not a drag)
+            if self.selection_start:
+                dx = abs(click_x - self.selection_start[0])
+                dy = abs(click_y - self.selection_start[1])
+                is_click = dx < 5 and dy < 5
+
+                if is_click:
+                    # Check if we clicked on a link
+                    href = self._get_link_at_position(click_x, click_y)
+                    if href:
+                        self.logger.info(f"Link clicked: {href}")
+                        self._navigate_to_link(href)
+                        # Clear selection since we're navigating
+                        self.selection_start = None
+                        self.selection_end = None
+                        return
+
+            # Extract selected text (for drag selection)
             selected_text = self._get_selected_text()
             if selected_text:
                 self.logger.info(f"Selected text: {selected_text[:100]}...")
                 # Copy to clipboard
                 self._copy_to_clipboard(selected_text)
             self.paint()
+
+    def _get_link_at_position(self, x: float, y: float) -> str | None:
+        """Get the href of a link at the given position, or None."""
+        for line_info in self.text_layout:
+            line_top = line_info["y"]
+            line_bottom = line_info["y"] + line_info["height"]
+            line_left = line_info["x"]
+            line_right = line_info["x"] + line_info["width"]
+
+            # Check if click is within this line's bounding box
+            if line_top <= y <= line_bottom and line_left <= x <= line_right:
+                href = line_info.get("href")
+                if href:
+                    return href
+        return None
+
+    def _navigate_to_link(self, href: str):
+        """Navigate to a link, handling relative URLs."""
+        if not href:
+            return
+
+        # Handle special URLs
+        if href.startswith("#"):
+            # Anchor link - for now just ignore (future: scroll to anchor)
+            self.logger.debug(f"Ignoring anchor link: {href}")
+            return
+
+        if href.startswith("javascript:"):
+            # JavaScript URLs - ignore for security
+            self.logger.debug(f"Ignoring javascript link: {href}")
+            return
+
+        # Resolve relative URLs against current page URL
+        if self.browser.active_tab and self.browser.active_tab.current_url:
+            base_url = self.browser.active_tab.current_url
+            resolved_url = base_url.resolve(href)
+            self.browser.navigate_to(str(resolved_url))
+        else:
+            # No current URL, treat href as absolute
+            self.browser.navigate_to(href)
 
     def _on_mouse_motion(self, controller, x, y):
         """Handle mouse motion for drag selection."""

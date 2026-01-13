@@ -129,6 +129,11 @@ class _DOMBuilder(HTMLParser):
         if self.current is self.root:
             self._ensure_body()
 
+        # Handle implicit closure for certain elements
+        # A new <p> tag closes any open <p> tag (HTML5 implicit paragraph closure)
+        if tag == "p" and self.current.tag == "p":
+            self._pop("p")
+
         self._push(el)
 
     def handle_endtag(self, tag):
@@ -193,7 +198,6 @@ def parse_html_with_styles(html_text: str, apply_styles: bool = True) -> Element
     """
     from .css import parse as parse_css
     from .style import StyleResolver
-    import os
     from pathlib import Path
 
     # Parse HTML
